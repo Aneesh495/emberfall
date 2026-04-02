@@ -1,0 +1,8 @@
+/build*/
+/dist/
+/evidence/
+/.agent-local/
+/CMakeUserPresets.json
+/.DS_Store
+*.save
+*.tmp
