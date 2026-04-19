@@ -16,7 +16,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 
-add_library(emberfall_core src/math.cpp src/scene.cpp src/files.cpp src/collision.cpp)
+add_library(emberfall_core src/math.cpp src/scene.cpp src/files.cpp src/collision.cpp src/game.cpp)
 target_include_directories(emberfall_core PUBLIC include)
 target_link_libraries(emberfall_core PUBLIC emberfall_options)
 if(BUILD_TESTING)
