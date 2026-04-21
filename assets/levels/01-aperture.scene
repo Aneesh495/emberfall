@@ -1,0 +1,25 @@
+ember-scene 1
+title "I. The Aperture"
+objective "Park one explorer on each amber plate. The iris stays open for eight seconds."
+node 1 0 solid "Slate foundation" 0 -0.38 0 12 0.76 25 0 0.15 0.22 0.31 0 0 0 0 0
+node 2 0 solid "West parapet" -6.2 0.7 0 0.4 1.4 25 0 0.24 0.31 0.41 0 0 0 0 0
+node 3 0 solid "East parapet" 6.2 0.7 0 0.4 1.4 25 0 0.24 0.31 0.41 0 0 0 0 0
+node 4 0 solid "West iris support" -4.0 1.5 0 4.0 3 0.85 0 0.21 0.28 0.39 0 0 0 0 0
+node 5 0 solid "East iris support" 4.0 1.5 0 4.0 3 0.85 0 0.21 0.28 0.39 0 0 0 0 0
+node 6 0 door "Twin relay iris" 0 1.27 0 4 2.54 0.62 0 0.48 0.26 0.12 10 0 0 0 8
+node 7 0 spawn "Ember spawn" -1 0.02 8 0.4 0.25 0.4 0 0.85 0.33 0.10 0 0 0 0 0
+node 8 0 spawn "Gleam spawn" 1 0.02 8 0.4 0.25 0.4 0 0.13 0.68 0.86 0 0 0 0 0
+node 10 0 plate "West relay plate" -2 0.05 3 1.35 0.10 1.35 0 0.92 0.44 0.11 0 0 0 0 1
+node 11 0 plate "East relay plate" 2 0.05 3 1.35 0.10 1.35 0 0.92 0.44 0.11 0 0 0 0 1
+node 12 0 checkpoint "Transit beacon" 0 0.05 -4 1.65 0.10 1.65 0 0.15 0.61 0.67 0 0 0 0 0
+node 13 0 exit "Stair down to the prism" 0 0.09 -9 2.0 0.18 2.0 0 0.23 0.82 0.66 0 0 0 0 0
+node 14 0 crate "Portable counterweight" 4.1 0.4 4.1 0.8 0.8 0.8 0 0.54 0.40 0.23 0 0 0 0 0
+node 20 0 decor "West iris tracer" -4.0 2.68 0.46 3.85 0.075 0.045 0 0.81 0.38 0.09 0 0 0 0 1.5
+node 21 0 decor "East iris tracer" 4.0 2.68 0.46 3.85 0.075 0.045 0 0.81 0.38 0.09 0 0 0 0 1.5
+node 22 0 decor "West power bus" -2 0.016 1.52 0.09 0.032 2.95 0 0.72 0.32 0.12 0 0 0 0 0.65
+node 23 0 decor "East power bus" 2 0.016 1.52 0.09 0.032 2.95 0 0.72 0.32 0.12 0 0 0 0 0.65
+node 24 0 decor "West exit tower" -1.45 1.25 -9 0.34 2.50 0.34 0 0.24 0.38 0.50 0 0 0 0 0
+node 25 0 decor "East exit tower" 1.45 1.25 -9 0.34 2.50 0.34 0 0.24 0.38 0.50 0 0 0 0 0
+node 26 0 decor "Exit lintel" 0 2.55 -9 3.1 0.2 0.4 0 0.17 0.54 0.49 0 0 0 0 0.9
+node 27 0 decor "West gallery lamp" -5.95 0.9 6 0.18 0.34 0.32 0 0.12 0.48 0.73 0 0 0 0 2.2
+node 28 0 decor "East gallery lamp" 5.95 0.9 6 0.18 0.34 0.32 0 0.12 0.48 0.73 0 0 0 0 2.2

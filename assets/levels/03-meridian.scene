@@ -1,0 +1,20 @@
+ember-scene 1
+title "III. The Meridian"
+objective "Board the ferry before your partner powers the bridge. Ride it across and relight the observatory."
+node 1 0 solid "Near dock" 0 -0.45 8.5 10 0.9 9 0 0.12 0.24 0.29 0 0 0 0 0
+node 2 0 solid "Far dock" 0 -0.45 -9 10 0.9 8 0 0.12 0.24 0.29 0 0 0 0 0
+node 3 0 platform "Meridian ferry" 0 -0.16 4 3.2 0.32 2.5 0 0.32 0.51 0.57 10 0 -0.16 -5 2.35
+node 7 0 spawn "Ember spawn" -1 0.02 9 0.4 0.25 0.4 0 0.85 0.33 0.10 0 0 0 0 0
+node 8 0 spawn "Gleam spawn" 1 0.02 9 0.4 0.25 0.4 0 0.13 0.68 0.86 0 0 0 0 0
+node 10 0 plate "Ferry power" 2.8 0.05 7 1.3 0.1 1.3 0 0.92 0.44 0.11 0 0 0 0 0
+node 11 0 checkpoint "Observatory landing" 0 0.06 -7 1.65 0.12 1.65 0 0.18 0.69 0.68 0 0 0 0 0
+node 12 0 exit "Observatory light" 0 0.08 -11 2 0.16 2 0 0.20 0.86 0.66 0 0 0 0 0
+node 20 0 decor "West suspension rail" -2 -0.75 -0.5 0.14 0.12 11.5 0 0.14 0.49 0.67 0 0 0 0 1.0
+node 21 0 decor "East suspension rail" 2 -0.75 -0.5 0.14 0.12 11.5 0 0.14 0.49 0.67 0 0 0 0 1.0
+node 22 0 decor "West suspension tower" -2.3 1.0 4.0 0.32 2.7 0.5 0 0.24 0.43 0.53 0 0 0 0 0
+node 23 0 decor "East suspension tower" 2.3 1.0 4.0 0.32 2.7 0.5 0 0.24 0.43 0.53 0 0 0 0 0
+node 24 0 decor "West observatory tower" -2.0 1.65 -11 0.50 3.3 0.68 0 0.20 0.41 0.50 0 0 0 0 0
+node 25 0 decor "East observatory tower" 2.0 1.65 -11 0.50 3.3 0.68 0 0.20 0.41 0.50 0 0 0 0 0
+node 26 0 decor "Observatory crossbar" 0 3.35 -11 4.6 0.24 0.60 0 0.25 0.49 0.54 0 0 0 0 0
+node 27 0 decor "Observatory lens" 0 2.58 -11 0.92 0.90 0.32 0 0.20 0.82 0.75 0 0 0 0 2.2
+node 28 0 decor "Ferry supply bus" 2.8 0.016 5.7 0.075 0.032 2.65 0 0.80 0.40 0.12 0 0 0 0 0.85
