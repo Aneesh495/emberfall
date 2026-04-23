@@ -40,6 +40,10 @@ if(BUILD_TESTING)
     add_test(NAME collision COMMAND collision_tests)
 endif()
 
+if(EMBERFALL_FRONTEND)
+    include(cmake/Frontend.cmake)
+endif()
+
 if(BUILD_TESTING)
     add_executable(playthrough_tests tests/playthrough.cpp)
     target_link_libraries(playthrough_tests PRIVATE emberfall_core)

@@ -1,0 +1,43 @@
+#pragma once
+
+#include "emberfall/renderer.hpp"
+
+#include <vulkan/vulkan.h>
+
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace ember::gpu {
+
+template<class T>
+T vk(VkStructureType type) {
+    T value{};
+    value.sType = type;
+    return value;
+}
+
+inline void check(VkResult result, const char* operation) {
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error(std::string(operation) + " (VkResult " + std::to_string(result) + ")");
+    }
+}
+
+template<class T, class Enumerate>
+std::vector<T> enumerate(Enumerate&& call) {
+    std::uint32_t count = 0;
+    check(call(&count,static_cast<T*>(nullptr)), "Enumerate Vulkan properties");
+    std::vector<T> out(count);
+    if (!count) return out;
+    check(call(&count,out.data()), "Read Vulkan properties");
+    out.resize(count);
+    return out;
+}
+
+struct Vertex { Vec3 position, normal; };
+std::array<Vertex,36> cube();
+bool visible(const Mat4& view_projection, const Mat4& model);
+VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
+                    VkPipelineLayout layout, VkFormat color, VkFormat depth);
+
+}

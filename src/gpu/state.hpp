@@ -1,0 +1,89 @@
+#pragma once
+
+#include "common.hpp"
+#include "render_graph.hpp"
+
+#include <atomic>
+
+namespace ember {
+
+struct Renderer::State {
+    static constexpr std::size_t slots = 2;
+    static constexpr std::uint32_t instance_limit = 32768;
+    static constexpr VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    static constexpr VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
+    struct Image {
+        VkImage image{};
+        VkImageView view{};
+        VkDeviceMemory memory{};
+    };
+    struct Buffer {
+        VkBuffer buffer{};
+        VkDeviceMemory memory{};
+        void* mapped{};
+    };
+    struct Frame {
+        VkCommandPool pool{};
+        VkCommandBuffer commands{};
+        VkSemaphore acquire{};
+        std::uint64_t finished{};
+        VkQueryPool timer{};
+        Buffer instances;
+        Image hdr, depth;
+        VkDescriptorSet sample{};
+    };
+    struct Screen {
+        VkImage image{};
+        VkImageView view{};
+        VkSemaphore ready{};
+    };
+
+    ~State();
+    void init(SDL_Window* window, std::filesystem::path shaders, bool validation);
+    void create_instance(bool validation);
+    void create_device();
+    void create_pipeline_layouts();
+    void create_frames();
+    void clear_swapchain();
+    bool rebuild_swapchain();
+    bool draw(std::span<const RenderItem> items, const View& view);
+    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count);
+    void wait(std::uint64_t serial) const;
+    void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect);
+    void make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags use);
+    void free(Image& image);
+    void free(Buffer& buffer);
+    VkImageView make_view(VkImage image, VkFormat format, VkImageAspectFlags aspect) const;
+    std::uint32_t memory_type(std::uint32_t bits, VkMemoryPropertyFlags flags) const;
+
+    SDL_Window* window{};
+    std::filesystem::path shaders;
+    VkInstance instance{};
+    VkDebugUtilsMessengerEXT messenger{};
+    VkSurfaceKHR surface{};
+    VkPhysicalDevice physical{};
+    VkPhysicalDeviceProperties properties{};
+    VkDevice device{};
+    VkQueue queue{};
+    std::uint32_t family{};
+    std::uint32_t timestamp_bits{};
+    VkSwapchainKHR swapchain{};
+    VkFormat screen_format{};
+    VkExtent2D extent{};
+    std::vector<Screen> screens;
+    std::array<Frame,slots> frames;
+    VkSemaphore timeline{};
+    VkDescriptorPool descriptors{};
+    VkDescriptorSetLayout sample_layout{};
+    VkPipelineLayout scene_layout{}, tonemap_layout{};
+    VkPipeline scene_pipeline{}, tonemap_pipeline{};
+    VkSampler sampler{};
+    Buffer geometry;
+    std::uint64_t serial{};
+    bool dirty{true};
+    bool loaded{};
+    FrameReport report{};
+    std::atomic<unsigned> errors{};
+};
+
+}
