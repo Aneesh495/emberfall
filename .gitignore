@@ -6,3 +6,5 @@
 /.DS_Store
 *.save
 *.tmp
+
+*.scene.recover
