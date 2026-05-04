@@ -59,10 +59,11 @@ private:
 }
 
 VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
-                    VkPipelineLayout layout, VkFormat color, VkFormat depth) {
-    const bool scene = depth != VK_FORMAT_UNDEFINED;
-    Module vertex(device,dir / (scene ? "scene.vert.spv" : "screen.vert.spv"));
-    Module fragment(device,dir / (scene ? "scene.frag.spv" : "tonemap.frag.spv"));
+                    VkPipelineLayout layout, VkFormat color, VkFormat depth, Pipeline kind) {
+    const bool scene = kind == Pipeline::scene;
+    const bool overlay = kind == Pipeline::overlay;
+    Module vertex(device,dir / (scene ? "scene.vert.spv" : overlay ? "overlay.vert.spv" : "screen.vert.spv"));
+    Module fragment(device,dir / (scene ? "scene.frag.spv" : overlay ? "overlay.frag.spv" : "tonemap.frag.spv"));
     std::array stages{
         vk<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO),
         vk<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
@@ -86,12 +87,22 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
         {6,1,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderItem,color)}
     }};
     static_assert(offsetof(RenderItem,emission) == offsetof(RenderItem,color)+12);
+    constexpr VkVertexInputBindingDescription ui_binding{0,sizeof(OverlayVertex),VK_VERTEX_INPUT_RATE_VERTEX};
+    constexpr std::array<VkVertexInputAttributeDescription,2> ui_attributes{{
+        {0,0,VK_FORMAT_R32G32_SFLOAT,offsetof(OverlayVertex,x)},
+        {1,0,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(OverlayVertex,color)}
+    }};
     auto input = vk<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
     if (scene) {
         input.vertexBindingDescriptionCount = static_cast<std::uint32_t>(bindings.size());
         input.pVertexBindingDescriptions = bindings.data();
         input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
         input.pVertexAttributeDescriptions = attributes.data();
+    } else if (overlay) {
+        input.vertexBindingDescriptionCount = 1;
+        input.pVertexBindingDescriptions = &ui_binding;
+        input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(ui_attributes.size());
+        input.pVertexAttributeDescriptions = ui_attributes.data();
     }
     auto assembly = vk<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -112,6 +123,15 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     VkPipelineColorBlendAttachmentState attachment{};
     attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    if (overlay) {
+        attachment.blendEnable = VK_TRUE;
+        attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     auto blend = vk<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
     blend.attachmentCount = 1;
     blend.pAttachments = &attachment;

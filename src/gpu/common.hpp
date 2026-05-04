@@ -37,7 +37,8 @@ std::vector<T> enumerate(Enumerate&& call) {
 struct Vertex { Vec3 position, normal; };
 std::array<Vertex,36> cube();
 bool visible(const Mat4& view_projection, const Mat4& model);
+enum class Pipeline { scene, tonemap, overlay };
 VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
-                    VkPipelineLayout layout, VkFormat color, VkFormat depth);
+                    VkPipelineLayout layout, VkFormat color, VkFormat depth, Pipeline kind);
 
 }

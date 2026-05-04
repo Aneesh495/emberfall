@@ -68,7 +68,7 @@ void Renderer::State::init(SDL_Window* owner, std::filesystem::path path, bool v
     const auto vertices = gpu::cube();
     make_buffer(geometry,sizeof(vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     std::memcpy(geometry.mapped,vertices.data(),sizeof(vertices));
-    scene_pipeline = gpu::pipeline(device,shaders,scene_layout,hdr_format,depth_format);
+    scene_pipeline = gpu::pipeline(device,shaders,scene_layout,hdr_format,depth_format,gpu::Pipeline::scene);
 }
 
 void Renderer::State::create_instance(bool validation) {
@@ -205,6 +205,7 @@ Renderer::State::~State() {
         clear_swapchain();
         for (auto& frame : frames) {
             free(frame.instances);
+            free(frame.overlay);
             vkDestroyQueryPool(device,frame.timer,nullptr);
             vkDestroySemaphore(device,frame.acquire,nullptr);
             vkDestroyCommandPool(device,frame.pool,nullptr);
@@ -215,6 +216,7 @@ Renderer::State::~State() {
         vkDestroyPipeline(device,scene_pipeline,nullptr);
         vkDestroyPipelineLayout(device,scene_layout,nullptr);
         vkDestroyPipelineLayout(device,tonemap_layout,nullptr);
+        vkDestroyPipelineLayout(device,overlay_layout,nullptr);
         vkDestroyDescriptorSetLayout(device,sample_layout,nullptr);
         vkDestroyDevice(device,nullptr);
     }

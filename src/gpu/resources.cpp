@@ -98,6 +98,11 @@ void Renderer::State::create_pipeline_layouts() {
     layout.pSetLayouts = &sample_layout;
     layout.pPushConstantRanges = &display;
     check(vkCreatePipelineLayout(device,&layout,nullptr,&tonemap_layout),"Create tonemap pipeline layout");
+    const VkPushConstantRange overlay{VK_SHADER_STAGE_FRAGMENT_BIT,0,4};
+    layout.setLayoutCount = 0;
+    layout.pSetLayouts = nullptr;
+    layout.pPushConstantRanges = &overlay;
+    check(vkCreatePipelineLayout(device,&layout,nullptr,&overlay_layout),"Create overlay pipeline layout");
     auto sampling = vk<VkSamplerCreateInfo>(VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
     sampling.magFilter = VK_FILTER_LINEAR;
     sampling.minFilter = VK_FILTER_LINEAR;
@@ -130,12 +135,16 @@ void Renderer::State::create_frames() {
             check(vkCreateQueryPool(device,&query,nullptr,&frame.timer),"Create frame timer queries");
         }
         make_buffer(frame.instances,instance_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     }
 }
 
 void Renderer::State::clear_swapchain() {
     vkDestroyPipeline(device,tonemap_pipeline,nullptr);
     tonemap_pipeline = nullptr;
+    vkDestroyPipeline(device,overlay_pipeline,nullptr);
+    overlay_pipeline = nullptr;
+    free(capture);
     vkDestroyDescriptorPool(device,descriptors,nullptr);
     descriptors = nullptr;
     for (auto& frame : frames) {
@@ -190,7 +199,9 @@ bool Renderer::State::rebuild_swapchain() {
     info.imageColorSpace = preferred->colorSpace;
     info.imageExtent = extent;
     info.imageArrayLayers = 1;
+    capture_supported = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (capture_supported) info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
     for (auto flag : {VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
@@ -213,7 +224,8 @@ bool Renderer::State::rebuild_swapchain() {
         screen.view = make_view(screen.image,screen_format,VK_IMAGE_ASPECT_COLOR_BIT);
         check(vkCreateSemaphore(device,&semaphore,nullptr,&screen.ready),"Create present semaphore");
     }
-    tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED);
+    tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::tonemap);
+    overlay_pipeline = gpu::pipeline(device,shaders,overlay_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::overlay);
     const VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,slots};
     auto pool = vk<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pool.maxSets = slots;

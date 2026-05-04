@@ -21,7 +21,11 @@ VkRenderingAttachmentInfo color_attachment(VkImageView view, std::array<float,4>
 
 }
 
-bool Renderer::draw(std::span<const RenderItem> items, const View& view) { return state_->draw(items,view); }
+bool Renderer::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay) {
+    return state_->draw(items,view,overlay);
+}
+
+void Renderer::capture_next(std::filesystem::path file) { state_->capture_file = std::move(file); }
 
 void Renderer::State::wait(std::uint64_t value) const {
     if (!value) return;
@@ -32,7 +36,7 @@ void Renderer::State::wait(std::uint64_t value) const {
     check(vkWaitSemaphores(device,&info,5'000'000'000ULL),"Wait for frame completion timeline");
 }
 
-void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count) {
+void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count, std::uint32_t overlay_count) {
     const auto cmd = frame.commands;
     auto begin = vk<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -94,16 +98,39 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         const Display display{std::clamp(view.exposure,0.05f,8.0f),view.antialias,linear_target};
         vkCmdPushConstants(cmd,tonemap_layout,VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(display),&display);
         vkCmdDraw(cmd,3,1,0,0);
+        if (overlay_count) {
+            vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,overlay_pipeline);
+            constexpr VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd,0,1,&frame.overlay.buffer,&offset);
+            const std::uint32_t encode = linear_target;
+            vkCmdPushConstants(cmd,overlay_layout,VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(encode),&encode);
+            vkCmdDraw(cmd,overlay_count,1,0,0);
+        }
         vkCmdEndRendering(cmd);
     });
+    if (!capture_file.empty()) {
+        graph.pass({{backbuffer,gpu::ImageUse::transfer_read}},[&] {
+            VkBufferImageCopy region{};
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+            region.imageExtent = {extent.width,extent.height,1};
+            vkCmdCopyImageToBuffer(cmd,screen.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,capture.buffer,1,&region);
+        });
+    }
     graph.pass({{backbuffer,gpu::ImageUse::present}},[]{});
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,1);
     check(vkEndCommandBuffer(cmd),"Finish recording frame");
 }
 
-bool Renderer::State::draw(std::span<const RenderItem> items, const View& view) {
+bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay) {
     if (items.size() > instance_limit) throw std::runtime_error("Frame instance limit exceeded");
+    if (overlay.size() > overlay_limit) throw std::runtime_error("Frame overlay limit exceeded");
     if (dirty && !rebuild_swapchain()) return false;
+    if (!capture_file.empty()) {
+        if (!capture_supported) throw std::runtime_error("Swapchain readback unsupported");
+        if (!capture.buffer) {
+            make_buffer(capture,static_cast<VkDeviceSize>(extent.width)*extent.height*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        }
+    }
     auto& frame = frames[serial % slots];
     wait(frame.finished);
     double elapsed = 0;
@@ -132,7 +159,8 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view) 
         std::memcpy(static_cast<std::byte*>(frame.instances.mapped)+count*sizeof(item),&item,sizeof(item));
         ++count;
     }
-    record(frame,screen,view,camera,count);
+    if (!overlay.empty()) std::memcpy(frame.overlay.mapped,overlay.data(),overlay.size_bytes());
+    record(frame,screen,view,camera,count,static_cast<std::uint32_t>(overlay.size()));
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
     acquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -164,8 +192,28 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view) 
     const auto status = vkQueuePresentKHR(queue,&present);
     if (status == VK_ERROR_OUT_OF_DATE_KHR || status == VK_SUBOPTIMAL_KHR || acquired == VK_SUBOPTIMAL_KHR) dirty = true;
     else check(status,"Present frame");
+    if (!capture_file.empty()) {
+        wait(frame.finished);
+        save_capture();
+    }
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial};
     return true;
+}
+
+void Renderer::State::save_capture() {
+    const auto count = static_cast<std::size_t>(extent.width)*extent.height;
+    auto ppm = "P6\n" + std::to_string(extent.width) + " " + std::to_string(extent.height) + "\n255\n";
+    const auto offset = ppm.size();
+    ppm.resize(offset+count*3);
+    const auto* data = static_cast<const char*>(capture.mapped);
+    const bool bgra = screen_format == VK_FORMAT_B8G8R8A8_SRGB || screen_format == VK_FORMAT_B8G8R8A8_UNORM;
+    for (std::size_t i=0; i<count; ++i) {
+        ppm[offset+3*i] = data[4*i+(bgra ? 2U : 0U)];
+        ppm[offset+3*i+1] = data[4*i+1];
+        ppm[offset+3*i+2] = data[4*i+(bgra ? 0U : 2U)];
+    }
+    write_atomic(capture_file,ppm);
+    capture_file.clear();
 }
 
 }

@@ -15,6 +15,11 @@ struct View {
     bool antialias{true};
 };
 
+struct OverlayVertex {
+    float x{}, y{};
+    std::array<float,4> color{};
+};
+
 struct FrameReport {
     std::uint32_t width{}, height{}, submitted{}, culled{};
     double gpu_ms{};
@@ -28,7 +33,8 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     void resize();
-    bool draw(std::span<const RenderItem> items, const View& view);
+    bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay = {});
+    void capture_next(std::filesystem::path file);
     const FrameReport& report() const;
     std::string adapter() const;
     unsigned validation_errors() const;

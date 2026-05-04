@@ -10,6 +10,7 @@ namespace ember {
 struct Renderer::State {
     static constexpr std::size_t slots = 2;
     static constexpr std::uint32_t instance_limit = 32768;
+    static constexpr std::uint32_t overlay_limit = 131072;
     static constexpr VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
     struct Image {
@@ -28,7 +29,7 @@ struct Renderer::State {
         VkSemaphore acquire{};
         std::uint64_t finished{};
         VkQueryPool timer{};
-        Buffer instances;
+        Buffer instances, overlay;
         Image hdr, depth;
         VkDescriptorSet sample{};
     };
@@ -46,8 +47,9 @@ struct Renderer::State {
     void create_frames();
     void clear_swapchain();
     bool rebuild_swapchain();
-    bool draw(std::span<const RenderItem> items, const View& view);
-    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count);
+    bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay);
+    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count, std::uint32_t overlay_count);
+    void save_capture();
     void wait(std::uint64_t serial) const;
     void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect);
     void make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags use);
@@ -75,10 +77,12 @@ struct Renderer::State {
     VkSemaphore timeline{};
     VkDescriptorPool descriptors{};
     VkDescriptorSetLayout sample_layout{};
-    VkPipelineLayout scene_layout{}, tonemap_layout{};
-    VkPipeline scene_pipeline{}, tonemap_pipeline{};
+    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{};
+    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{};
     VkSampler sampler{};
-    Buffer geometry;
+    Buffer geometry, capture;
+    std::filesystem::path capture_file;
+    bool capture_supported{};
     std::uint64_t serial{};
     bool dirty{true};
     bool loaded{};

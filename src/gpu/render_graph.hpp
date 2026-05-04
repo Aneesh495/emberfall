@@ -9,7 +9,7 @@
 
 namespace ember::gpu {
 
-enum class ImageUse { hdr_output, depth_output, sampled, present };
+enum class ImageUse { hdr_output, depth_output, sampled, transfer_read, present };
 struct Resource {
     VkImage image{};
     VkImageAspectFlags aspect{};
@@ -35,7 +35,7 @@ public:
         if (uses.size() > barriers.size()) throw std::logic_error("Pass image limit");
         for (const auto& [image, usage] : uses) {
             const auto next = state(usage);
-            if ((usage == ImageUse::sampled || usage == ImageUse::present) &&
+            if ((usage == ImageUse::sampled || usage == ImageUse::transfer_read || usage == ImageUse::present) &&
                 image.layout == VK_IMAGE_LAYOUT_UNDEFINED) {
                 throw std::logic_error("Graph read of unwritten image");
             }
@@ -79,6 +79,9 @@ private:
         case ImageUse::sampled:
             return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+        case ImageUse::transfer_read:
+            return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_COPY_BIT,VK_ACCESS_2_TRANSFER_READ_BIT};
         case ImageUse::present:
             return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,0,0};
         }
