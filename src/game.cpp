@@ -309,6 +309,63 @@ std::vector<RenderItem> Game::extract(float alpha) const {
     return output;
 }
 
+SimulationState Game::snapshot() const {
+    SimulationState result{ticks_,checkpoint_,completed_,{player(0),player(1)},{}};
+    for (const auto& [id,e] : entities_) {
+        const auto kind = world_.get<Instance>(e)->kind;
+        if (kind == Kind::solid || kind == Kind::decor || kind == Kind::exit || kind == Kind::checkpoint) continue;
+        const auto& pose = *world_.get<BodyPose>(e);
+        result.devices.push_back({id,pose.position,pose.yaw,*world_.get<Mechanism>(e)});
+    }
+    return result;
+}
+
+void Game::apply_snapshot(const SimulationState& snapshot) {
+    const auto expected = this->snapshot();
+    const auto finite_position = [](Vec3 p) {
+        return finite(p) && std::max({std::abs(p.x),std::abs(p.y),std::abs(p.z)}) <= 4096;
+    };
+    if (snapshot.devices.size() != expected.devices.size()) throw std::runtime_error("Snapshot scene schema mismatch");
+    if (snapshot.checkpoint) {
+        const auto found = entities_.find(snapshot.checkpoint);
+        if (found == entities_.end() || world_.get<Instance>(found->second)->kind != Kind::checkpoint) {
+            throw std::runtime_error("Snapshot checkpoint mismatch");
+        }
+    }
+    for (std::size_t i=0; i<snapshot.devices.size(); ++i) {
+        const auto& device = snapshot.devices[i];
+        if (device.id != expected.devices[i].id || !finite_position(device.position) ||
+            !std::isfinite(device.yaw) || std::abs(device.yaw) > 65 ||
+            !std::isfinite(device.state.travel) || device.state.travel < 0 || device.state.travel > 1 ||
+            device.state.ticks > 216001) throw std::runtime_error("Snapshot device outside contract");
+    }
+    for (const auto& p : snapshot.players) {
+        const auto support = entities_.find(p.body.ground);
+        if (!finite_position(p.body.feet) || !finite(p.body.velocity) || length(p.body.velocity) > 40 ||
+            !std::isfinite(p.facing) || std::abs(p.facing) > 6.3f || !std::isfinite(p.stride) ||
+            std::abs(p.stride) > 6.3f || !std::isfinite(p.body.height) || p.body.height < 0.89f ||
+            p.body.height > 1.46f || (p.body.ground && (support == entities_.end() ||
+            !collider(world_.get<Instance>(support->second)->kind)))) {
+            throw std::runtime_error("Snapshot player outside contract");
+        }
+    }
+    ticks_ = snapshot.ticks;
+    checkpoint_ = snapshot.checkpoint;
+    completed_ = snapshot.completed;
+    events_.clear();
+    for (std::size_t i=0; i<players_.size(); ++i) {
+        const auto& p = snapshot.players[i];
+        *world_.get<Player>(players_[i]) = p;
+        *world_.get<BodyPose>(players_[i]) = {p.body.feet,p.body.feet,0};
+    }
+    for (const auto& device : snapshot.devices) {
+        const auto e = entities_.at(device.id);
+        *world_.get<BodyPose>(e) = {device.position,device.position,device.yaw};
+        *world_.get<Mechanism>(e) = device.state;
+    }
+    rebuild_collision();
+}
+
 std::uint64_t Game::state_hash() const {
     std::uint64_t hash = 14695981039346656037ULL;
     const auto add = [&](std::uint64_t value) {

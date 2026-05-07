@@ -47,6 +47,21 @@ struct GameEvent {
     SceneId subject{};
 };
 
+struct DeviceState {
+    SceneId id{};
+    Vec3 position;
+    float yaw{};
+    Mechanism state;
+};
+
+struct SimulationState {
+    std::uint64_t ticks{};
+    SceneId checkpoint{};
+    bool completed{};
+    std::array<Player,2> players;
+    std::vector<DeviceState> devices;
+};
+
 class Game {
 public:
     static constexpr float timestep = 1.0f/60;
@@ -61,6 +76,8 @@ public:
     std::span<const GameEvent> events() const { return events_; }
     std::uint64_t state_hash() const;
     void restore_checkpoint(SceneId id);
+    SimulationState snapshot() const;
+    void apply_snapshot(const SimulationState& snapshot);
 
 private:
     void rebuild_collision();

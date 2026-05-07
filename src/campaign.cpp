@@ -46,7 +46,7 @@ bool valid(Settings s) {
 
 std::uint64_t fingerprint(std::string_view bytes) {
     std::uint64_t hash = 14695981039346656037ULL;
-    for (const unsigned char byte : bytes) hash = (hash ^ byte)*1099511628211ULL;
+    for (const char byte : bytes) hash = (hash ^ static_cast<unsigned char>(byte))*1099511628211ULL;
     return hash;
 }
 
