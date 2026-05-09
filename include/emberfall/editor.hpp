@@ -35,6 +35,7 @@ class EditorFile {
 public:
     explicit EditorFile(std::filesystem::path path);
     SceneDocument& document() { return document_; }
+    const SceneDocument& document() const { return document_; }
     bool recovered() const { return recovered_; }
     void write_recovery() const;
     void save();

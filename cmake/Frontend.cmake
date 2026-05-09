@@ -47,3 +47,6 @@ target_link_libraries(lantern-reach PRIVATE emberfall_native)
 add_custom_target(emberfall_levels ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/assets/levels" "${CMAKE_CURRENT_BINARY_DIR}/levels")
 add_dependencies(lantern-reach emberfall_levels)
+
+add_executable(emberfall-editor src/native/editor_main.cpp)
+target_link_libraries(emberfall-editor PRIVATE emberfall_native)

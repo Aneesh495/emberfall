@@ -30,10 +30,11 @@ Platform::~Platform() {
     SDL_Quit();
 }
 
-Input Platform::input() {
+Input Platform::input(const std::function<void(const SDL_Event&)>& observer) {
     Input input;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (observer) observer(event);
         switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:

@@ -5,6 +5,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <functional>
+
 namespace ember::native {
 
 struct Input {
@@ -19,7 +21,7 @@ public:
     ~Platform();
     Platform(const Platform&) = delete;
     Platform& operator=(const Platform&) = delete;
-    Input input();
+    Input input(const std::function<void(const SDL_Event&)>& observer = {});
     void set_fullscreen(bool enabled) const;
     SDL_Window* window() const { return window_; }
 private:
