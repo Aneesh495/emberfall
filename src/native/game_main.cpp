@@ -1,4 +1,5 @@
 #include "audio.hpp"
+#include "emberfall/net.hpp"
 
 #include <charconv>
 #include <iostream>
@@ -13,7 +14,9 @@ struct Options {
     std::filesystem::path assets, shaders, profile, capture;
     unsigned frames{}, level{};
     int width{1100}, height{700};
-    bool validation{}, audio{true};
+    bool validation{}, audio{true}, hosting{};
+    std::string address, key;
+    std::uint16_t port{};
 };
 
 unsigned positive(std::string_view text) {
@@ -39,6 +42,15 @@ Options parse(int argc,char** argv) {
         else if (arg == "--capture") options.capture = value();
         else if (arg == "--frames") options.frames = positive(value());
         else if (arg == "--level") options.level = positive(value());
+        else if (arg == "--key") options.key = value();
+        else if (arg == "--host" || arg == "--join") {
+            if (options.port) throw std::runtime_error("Specify exactly one network role");
+            options.hosting = arg == "--host";
+            if (!options.hosting) options.address = value();
+            const auto port = positive(value());
+            if (port > 65535) throw std::runtime_error("UDP port outside bounds");
+            options.port = static_cast<std::uint16_t>(port);
+        }
         else if (arg == "--validate") options.validation = true;
         else if (arg == "--no-audio") options.audio = false;
         else if (arg == "--size") {
@@ -54,6 +66,10 @@ Options parse(int argc,char** argv) {
     if (options.level > Campaign::level_count || options.frames > 10000 || (!options.capture.empty() && !options.frames)) {
         throw std::runtime_error("Level or capture frame outside bounds");
     }
+    if (options.port && (options.key.size() < 4 || options.key.size() > 64)) {
+        throw std::runtime_error("Network play requires a shared key of 4 to 64 characters");
+    }
+    if (!options.port && !options.key.empty()) throw std::runtime_error("A key requires a network role");
     const auto base = executable_directory();
     if (options.assets.empty()) options.assets = base/"levels";
     if (options.shaders.empty()) options.shaders = base/"shaders";
@@ -75,6 +91,9 @@ private:
     void handle(Input input);
     void simulate(double elapsed);
     void trigger(GameEvent event);
+    void poll_network(std::uint64_t now);
+    void client_input(Command command);
+    void accept(net::ServerFrame frame,std::uint64_t now);
     void load(Progress progress);
     void checkpoint();
     void persist();
@@ -97,6 +116,12 @@ private:
     double note_time_{};
     std::string note_;
     bool quit_{};
+    std::unique_ptr<net::Session> network_;
+    std::deque<net::InputFrame> history_;
+    std::uint32_t epoch_{}, net_order_{}, net_jump_{}, net_use_{}, applied_input_{};
+    unsigned network_level_{};
+    std::uint64_t last_broadcast_{}, sample_time_{}, last_server_tick_{};
+    Vec3 remote_before_{}, remote_after_{};
 };
 
 Application::Application(const Options& options)
@@ -118,7 +143,20 @@ Application::Application(const Options& options)
     world_ = campaign_.load({});
     eye_ = {5,11,16};
     focus_ = {0,0,0};
-    if (options.level) load({options.level-1,0,false});
+    if (options.port) {
+        const auto key = fingerprint(options.key);
+        if (options.hosting) {
+            network_ = net::Session::host(options.port,key,campaign_.revision());
+            if (progress_.complete) progress_ = {};
+            load(options.level ? Progress{options.level-1,0,false} : progress_);
+        } else {
+            network_ = net::Session::join(options.address,options.port,key,campaign_.revision());
+            load({});
+            note_ = "Waiting for host";
+            note_time_ = 5;
+        }
+        std::cout << "network=" << (options.hosting ? "host" : "client") << " port=" << network_->port() << '\n';
+    } else if (options.level) load({options.level-1,0,false});
     std::cout << renderer_.adapter() << " audio=" << (audio_.enabled() ? "ready" : "unavailable") << '\n';
 }
 
@@ -130,7 +168,14 @@ void Application::load(Progress progress) {
     world_ = campaign_.load(progress);
     progress_ = progress;
     screen_ = Screen::playing;
-    selected_ = 0;
+    selected_ = network_ && !options_.hosting ? 1U : 0U;
+    if (network_ && options_.hosting) {
+        if (++epoch_ == 0) ++epoch_;
+        network_level_ = progress.level;
+        network_->set_epoch(epoch_);
+        applied_input_ = 0;
+        last_broadcast_ = 0;
+    }
     focus_ = world_->player(selected_).body.feet + Vec3{0,0,-1.2f};
     eye_ = focus_ + Vec3{1.4f,7.2f,8.2f};
     accumulator_ = 0;
@@ -138,6 +183,7 @@ void Application::load(Progress progress) {
 }
 
 void Application::checkpoint() {
+    if (network_ && !options_.hosting) return;
     try {
         campaign_.save_progress(options_.profile/"campaign.save",progress_);
     } catch (const std::exception& error) {
@@ -168,13 +214,14 @@ void Application::handle(Input input) {
             screen_ = Screen::pause;
             cursor_ = 0;
             pending_ = {};
+            if (network_ && !options_.hosting) client_input({});
             return;
         }
-        if (input.select) {
+        if (input.select && !network_) {
             selected_ ^= 1;
             pending_ = {};
         }
-        if (input.restart) {
+        if (input.restart && (!network_ || options_.hosting)) {
             load({progress_.level,world_->checkpoint(),false});
             return;
         }
@@ -185,8 +232,8 @@ void Application::handle(Input input) {
         return;
     }
     if (screen_ == Screen::next) {
-        if (input.enter) load(progress_);
-        if (input.pause) { screen_ = Screen::title; cursor_ = 0; }
+        if (input.enter && (!network_ || options_.hosting)) load(progress_);
+        if (input.pause && (!network_ || options_.hosting)) { screen_ = Screen::title; cursor_ = 0; }
         return;
     }
     if (screen_ == Screen::finished) {
@@ -225,9 +272,9 @@ void Application::handle(Input input) {
         if (cursor_ == 3) quit_ = true;
     } else if (screen_ == Screen::pause) {
         if (input.pause || (input.enter && cursor_ == 0)) screen_ = Screen::playing;
-        else if (input.enter && cursor_ == 1) load({progress_.level,world_->checkpoint(),false});
+        else if (input.enter && cursor_ == 1 && (!network_ || options_.hosting)) load({progress_.level,world_->checkpoint(),false});
         else if (input.enter && cursor_ == 2) { previous_ = screen_; screen_ = Screen::settings; cursor_ = 0; }
-        else if (input.enter && cursor_ == 3) { screen_ = Screen::title; cursor_ = 0; }
+        else if (input.enter && cursor_ == 3) { if (network_) quit_ = true; else screen_ = Screen::title; cursor_ = 0; }
     }
 }
 
@@ -251,6 +298,67 @@ void Application::trigger(GameEvent event) {
     note_time_ = 2.5;
 }
 
+void Application::client_input(Command command) {
+    if (!network_->connected() || !epoch_ || world_->completed()) return;
+    if (command.jump) ++net_jump_;
+    if (command.interact) ++net_use_;
+    if (++net_order_ == 0) ++net_order_;
+    const net::InputFrame packet{epoch_,net_order_,net_jump_,net_use_,command};
+    network_->input(packet);
+    history_.push_back(packet);
+    if (history_.size() > 48) history_.pop_front();
+    world_->tick({Command{},command});
+}
+
+void Application::accept(net::ServerFrame frame,std::uint64_t now) {
+    const bool transitioned = frame.epoch != epoch_;
+    if (epoch_ && transitioned && !net::newer(frame.epoch,epoch_)) return;
+    if (!transitioned && frame.simulation.ticks < last_server_tick_) return;
+    if (transitioned) {
+        load({frame.level,0,false});
+        epoch_ = frame.epoch;
+        net_order_ = net_jump_ = net_use_ = 0;
+        history_.clear();
+    }
+    const auto previous_checkpoint = progress_.checkpoint;
+    world_->apply_snapshot(frame.simulation);
+    last_server_tick_ = frame.simulation.ticks;
+    remote_before_ = transitioned ? frame.simulation.players[0].body.feet : remote_after_;
+    remote_after_ = frame.simulation.players[0].body.feet;
+    sample_time_ = now;
+    while (!history_.empty() && frame.acknowledged && !net::newer(history_.front().order,frame.acknowledged)) {
+        history_.pop_front();
+    }
+    for (const auto& packet : history_) world_->tick({Command{},packet.command});
+    if (!frame.simulation.completed) progress_.checkpoint = frame.simulation.checkpoint;
+    if (!frame.simulation.completed && frame.simulation.checkpoint && frame.simulation.checkpoint != previous_checkpoint) {
+        trigger({Signal::checkpoint,frame.simulation.checkpoint});
+    }
+    if (frame.simulation.completed && screen_ != Screen::next && screen_ != Screen::finished) {
+        audio_.cue(Signal::exit);
+        const bool final = frame.level+1 == Campaign::level_count;
+        progress_ = {final ? frame.level : frame.level+1,0,final};
+        screen_ = final ? Screen::finished : Screen::next;
+    }
+}
+
+void Application::poll_network(std::uint64_t now) {
+    if (!network_) return;
+    network_->poll(now);
+    if (options_.hosting) {
+        if (epoch_ && now-last_broadcast_ >= 50) {
+            network_->broadcast({epoch_,applied_input_,network_level_,world_->snapshot()});
+            last_broadcast_ = now;
+        }
+    } else if (auto frame = network_->receive()) {
+        try { accept(std::move(*frame),now); }
+        catch (const std::exception& error) {
+            note_ = error.what();
+            note_time_ = 4;
+        }
+    }
+}
+
 void Application::simulate(double elapsed) {
     note_time_ = std::max(0.0,note_time_-elapsed);
     if (screen_ != Screen::playing) return;
@@ -260,6 +368,15 @@ void Application::simulate(double elapsed) {
         std::array<Command,2> pair{};
         pair[selected_] = pending_;
         pending_.jump = pending_.interact = false;
+        if (network_ && !options_.hosting) {
+            client_input(pair[1]);
+            accumulator_ -= Game::timestep;
+            continue;
+        }
+        if (network_) {
+            pair[1] = network_->remote_command();
+            applied_input_ = network_->last_input();
+        }
         world_->tick(pair);
         accumulator_ -= Game::timestep;
         for (const auto event : world_->events()) trigger(event);
@@ -296,8 +413,13 @@ void Application::paint(Canvas& canvas) const {
         canvas.text(23,15,2.8f,scene.title,white);
         canvas.wrapped(23,50,1.75f,scene.objective,white);
         canvas.box(0,538,canvas.width(),62,panel);
-        canvas.text(23,548,1.7f,selected_ ? "GLEAM   /   EMBER HOLDING" : "EMBER   /   GLEAM HOLDING",selected_ ? cyan : amber);
-        canvas.wrapped(23,572,1.43f,"WASD MOVE   SPACE JUMP   E USE   TAB SWITCH   CTRL CROUCH   ESC PAUSE",muted);
+        const auto player_label = selected_ ? "GLEAM" : "EMBER";
+        const auto status = std::string(player_label) + (network_ ?
+            (network_->connected() ? "   /   CO-OP CONNECTED" : "   /   WAITING FOR PEER") :
+            (selected_ ? "   /   EMBER HOLDING" : "   /   GLEAM HOLDING"));
+        canvas.text(23,548,1.7f,status,selected_ ? cyan : amber);
+        canvas.wrapped(23,572,1.43f,network_ ? "WASD MOVE   SPACE JUMP   E USE   CTRL CROUCH   ESC PAUSE" :
+                       "WASD MOVE   SPACE JUMP   E USE   TAB SWITCH   CTRL CROUCH   ESC PAUSE",muted);
         if (note_time_ > 0) {
             canvas.box(22,111,std::min(canvas.width()-44,370.0f),34,panel);
             canvas.wrapped(32,121,1.55f,note_.substr(0,120),cyan);
@@ -337,7 +459,7 @@ void Application::paint(Canvas& canvas) const {
         canvas.text(32,106,3.0f,finished ? "OBSERVATORY RELIT" : "ROUTE OPENED",white);
         canvas.wrapped(32,175,1.7f,finished ? "The beacon is lit. The night crew can find its way home." :
             campaign_.scene(progress_.level).title,cyan);
-        canvas.wrapped(32,245,1.5f,finished ? "ENTER TO RETURN TO TITLE" : "ENTER TO CONTINUE",white);
+        canvas.wrapped(32,245,1.5f,finished ? "ENTER TO RETURN TO TITLE" : network_ && !options_.hosting ? "WAITING FOR HOST" : "ENTER TO CONTINUE",white);
     }
 }
 
@@ -352,6 +474,7 @@ int Application::run() {
         handle(platform_.input());
         if (quit_) break;
         simulate(elapsed);
+        poll_network(now/1'000'000);
         audio_.update(settings_.volume);
         int width = 0, height = 0;
         if (!SDL_GetWindowSize(platform_.window(),&width,&height)) throw std::runtime_error(SDL_GetError());
@@ -361,7 +484,12 @@ int Application::run() {
         if (options_.frames && drawn+1 == options_.frames && !options_.capture.empty()) {
             renderer_.capture_next(options_.capture);
         }
-        const auto items = world_->extract(std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f));
+        std::optional<Vec3> remote;
+        if (network_ && !options_.hosting && epoch_) {
+            const float weight = std::clamp(static_cast<float>(now/1'000'000-sample_time_)/50,0.0f,1.0f);
+            remote = lerp(remote_before_,remote_after_,weight);
+        }
+        const auto items = world_->extract(std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f),remote);
         if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices())) {
             ++drawn;
             if (options_.frames && drawn == options_.frames) break;
@@ -372,6 +500,11 @@ int Application::run() {
     std::cout << "frames=" << drawn << " surface=" << report.width << 'x' << report.height
               << " submitted=" << report.submitted << " culled=" << report.culled
               << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors() << '\n';
+    if (network_) {
+        const auto& net = network_->stats();
+        std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received
+                  << " connected=" << network_->connected() << '\n';
+    }
     return (!options_.frames || drawn == options_.frames) && renderer_.validation_errors() == 0 ? 0 : 1;
 }
 
@@ -381,7 +514,8 @@ int run_game(int argc,char** argv) {
     if (argc==2 && std::string_view(argv[1]) == "--help") {
         std::cout << "lantern-reach [--assets DIR] [--shaders DIR] [--profile DIR] [--validate]\n"
                      "              [--size WIDTHxHEIGHT] [--no-audio] [--level 1..3]\n"
-                     "              [--frames N [--capture FILE.ppm]]\n";
+                     "              [--frames N [--capture FILE.ppm]]\n"
+                     "              [--host PORT | --join IPV4 PORT] --key SHARED_KEY\n";
         return 0;
     }
     const auto options = parse(argc,argv);

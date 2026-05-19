@@ -278,7 +278,7 @@ void Game::tick(const std::array<Command,2>& commands) {
     progress();
 }
 
-std::vector<RenderItem> Game::extract(float alpha) const {
+std::vector<RenderItem> Game::extract(float alpha, std::optional<Vec3> remote_first) const {
     std::vector<RenderItem> output;
     output.reserve(world_.size()+20);
     world_.each<Instance,BodyPose,Mechanism>([&](Entity, const Instance& n, const BodyPose& pose, const Mechanism& s) {
@@ -303,8 +303,8 @@ std::vector<RenderItem> Game::extract(float alpha) const {
     });
     for (std::size_t i=0; i<players_.size(); ++i) {
         const auto& pose = *world_.get<BodyPose>(players_[i]);
-        add_player(output,player(i),lerp(pose.previous,pose.position,alpha),
-                   i == 0 ? Vec3{0.95f,0.43f,0.10f} : Vec3{0.10f,0.74f,0.83f});
+        const auto position = i == 0 && remote_first ? *remote_first : lerp(pose.previous,pose.position,alpha);
+        add_player(output,player(i),position,i == 0 ? Vec3{0.95f,0.43f,0.10f} : Vec3{0.10f,0.74f,0.83f});
     }
     return output;
 }
