@@ -1,0 +1,6 @@
+ember-scene 1
+title "Relay stanchion"
+objective "Common observatory pathway marker"
+node 1 0 decor "Fluted marker base" 0 0.42 0 0.19 0.84 0.19 0 0.20 0.33 0.45 0 0 0 0 0
+node 2 1 decor "Copper collar" 0 0.37 0 1.38 0.19 1.38 0 0.45 0.27 0.14 0 0 0 0 0
+node 3 1 decor "Glowing lens" 0 0.61 0 1.30 0.31 1.30 0 0.12 0.58 0.52 0 0 0 0 1.9

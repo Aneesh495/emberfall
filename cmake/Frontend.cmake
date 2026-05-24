@@ -44,8 +44,6 @@ add_library(emberfall_native src/native/platform.cpp src/native/canvas.cpp)
 target_link_libraries(emberfall_native PUBLIC emberfall_renderer)
 add_executable(lantern-reach src/native/game_main.cpp src/native/audio.cpp)
 target_link_libraries(lantern-reach PRIVATE emberfall_native)
-add_custom_target(emberfall_levels ALL
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/assets/levels" "${CMAKE_CURRENT_BINARY_DIR}/levels")
 add_dependencies(lantern-reach emberfall_levels)
 
 add_executable(emberfall-editor src/native/editor_main.cpp)

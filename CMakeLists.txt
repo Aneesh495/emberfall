@@ -40,9 +40,6 @@ if(BUILD_TESTING)
     add_test(NAME collision COMMAND collision_tests)
 endif()
 
-if(EMBERFALL_FRONTEND)
-    include(cmake/Frontend.cmake)
-endif()
 
 if(BUILD_TESTING)
     add_executable(playthrough_tests tests/playthrough.cpp)
@@ -71,4 +68,22 @@ if(BUILD_TESTING)
     target_link_libraries(scheduler_tests PRIVATE emberfall_core)
     add_test(NAME scheduler COMMAND scheduler_tests)
     set_tests_properties(scheduler PROPERTIES TIMEOUT 25)
+endif()
+
+add_executable(ember-tool src/tools/main.cpp)
+target_link_libraries(ember-tool PRIVATE emberfall_core)
+
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+add_custom_target(emberfall_levels
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/cook.py"
+        "${PROJECT_SOURCE_DIR}/assets/levels" "${CMAKE_CURRENT_BINARY_DIR}/levels"
+        "$<TARGET_FILE:ember-tool>"
+    DEPENDS ember-tool VERBATIM)
+
+if(EMBERFALL_FRONTEND)
+    include(cmake/Frontend.cmake)
+endif()
+if(BUILD_TESTING)
+    add_test(NAME cooker COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cooker.py"
+        "${PROJECT_SOURCE_DIR}/scripts/cook.py" "${PROJECT_SOURCE_DIR}/assets/levels" "$<TARGET_FILE:ember-tool>")
 endif()

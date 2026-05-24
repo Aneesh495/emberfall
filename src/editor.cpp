@@ -137,6 +137,28 @@ void EditorFile::save() {
     std::filesystem::remove(journal_);
 }
 
+std::vector<Edit> instantiate_prefab(const Scene& prefab, SceneId first, Vec3 offset) {
+    validate_scene(prefab);
+    if (prefab.nodes.empty() || prefab.nodes.size() > 64) throw std::runtime_error("Prefab node limit");
+    std::map<SceneId,SceneId> mapping;
+    std::vector<Edit> added;
+    for (const auto& [id,n] : prefab.nodes) {
+        (void)n;
+        if (!first) throw std::runtime_error("Prefab ID overflow");
+        mapping.emplace(id,first++);
+    }
+    for (const auto& [id,node] : prefab.nodes) {
+        auto instance = node;
+        instance.id = mapping.at(id);
+        if (node.parent) instance.parent = mapping.at(node.parent);
+        else instance.position += offset;
+        if (node.link) instance.link = mapping.at(node.link);
+        if (node.kind == Kind::platform) instance.destination += offset;
+        added.push_back({{},std::move(instance)});
+    }
+    return added;
+}
+
 SceneId pick_node(const Scene& scene, Vec3 origin, Vec3 direction, float reach) {
     direction = unit(direction);
     const Box cube{{-0.5f,-0.5f,-0.5f},{0.5f,0.5f,0.5f}};

@@ -52,7 +52,8 @@ Game::Game(const Scene& scene, bool allow_incomplete) {
     bool exit = false;
     for (const auto& [id,node] : scene.nodes) {
         if (node.kind == Kind::spawn) {
-            if (spawns < spawn_.size()) spawn_[spawns++] = node.position;
+            if (spawns < spawn_.size()) spawn_[spawns] = node.position;
+            ++spawns;
             continue;
         }
         exit = exit || node.kind == Kind::exit;

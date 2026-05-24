@@ -223,28 +223,10 @@ void Editor::make_prefab() {
 void Editor::add_prefab() {
     if (assets_.empty()) throw std::runtime_error("No prefab in this directory");
     const auto prefab = load_scene(assets_.at(selected_asset_));
-    if (prefab.nodes.empty() || prefab.nodes.size() > 64) throw std::runtime_error("Prefab node limit");
-    auto next = file_.document().allocate_id();
-    std::map<SceneId,SceneId> mapping;
-    std::vector<Edit> added;
-    std::vector<SceneId> instances;
-    for (const auto& [id,n] : prefab.nodes) {
-        (void)n;
-        if (!next) throw std::runtime_error("Prefab ID overflow");
-        mapping.emplace(id,next++);
-    }
-    for (const auto& [id,node] : prefab.nodes) {
-        auto instance = node;
-        instance.id = mapping.at(id);
-        if (node.parent) instance.parent = mapping.at(node.parent);
-        else instance.position.x += 1.5f;
-        if (node.link) instance.link = mapping.at(node.link);
-        if (node.kind == Kind::platform) instance.destination.x += 1.5f;
-        instances.push_back(instance.id);
-        added.push_back({{},std::move(instance)});
-    }
+    const auto added = instantiate_prefab(prefab,file_.document().allocate_id(),{1.5f,0,0});
     edit(added);
-    selected_ = std::move(instances);
+    selected_.clear();
+    for (const auto& item : added) selected_.push_back(item.after->id);
 }
 
 void Editor::key(const SDL_KeyboardEvent& e) {

@@ -48,6 +48,7 @@ private:
     SceneDocument document_;
 };
 
+std::vector<Edit> instantiate_prefab(const Scene& prefab, SceneId first, Vec3 offset);
 SceneId pick_node(const Scene& scene, Vec3 origin, Vec3 direction, float reach = 150);
 std::vector<Edit> shift_nodes(const Scene& scene, std::span<const SceneId> ids, Vec3 delta);
 
