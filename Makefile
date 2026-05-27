@@ -10,3 +10,30 @@ build: bootstrap
 	cmake --build "$(BUILD)"
 test: build
 	ctest --test-dir "$(BUILD)" --output-on-failure
+
+PACKAGE_DIR ?= dist
+SCENE ?= assets/levels/01-aperture.scene
+ARGS ?=
+.PHONY: editor game demo cook data package-game net-test
+editor: bootstrap
+	cmake --build "$(BUILD)" --target emberfall-editor
+	"$(BUILD)/emberfall-editor" "$(SCENE)" $(ARGS)
+game: bootstrap
+	cmake --build "$(BUILD)" --target lantern-reach
+	"$(BUILD)/lantern-reach" $(ARGS)
+demo: game
+cook: bootstrap
+	cmake --build "$(BUILD)" --target emberfall_levels
+data: cook
+package-game: bootstrap
+	cmake --build "$(BUILD)" --target lantern-reach
+	./scripts/package.sh "$(BUILD)" "$(PACKAGE_DIR)"
+net-test: bootstrap
+	cmake --build "$(BUILD)" --target network_tests
+	"$(BUILD)/network_tests" assets/levels
+
+REPLAY ?=
+.PHONY: replay-check
+replay-check: cook
+	test -n "$(REPLAY)"
+	"$(BUILD)/ember-tool" replay-check "$(BUILD)/levels" "$(REPLAY)"

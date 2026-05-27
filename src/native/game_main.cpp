@@ -1,5 +1,6 @@
 #include "audio.hpp"
 #include "emberfall/net.hpp"
+#include "emberfall/replay.hpp"
 
 #include <charconv>
 #include <iostream>
@@ -11,10 +12,10 @@ namespace {
 enum class Screen { title, playing, pause, settings, next, finished };
 
 struct Options {
-    std::filesystem::path assets, shaders, profile, capture;
+    std::filesystem::path assets, shaders, profile, capture, replay, record;
     unsigned frames{}, level{};
     int width{1100}, height{700};
-    bool validation{}, audio{true}, hosting{};
+    bool validation{}, audio{true}, hosting{}, replay_fast{};
     std::string address, key;
     std::uint16_t port{};
 };
@@ -42,6 +43,9 @@ Options parse(int argc,char** argv) {
         else if (arg == "--capture") options.capture = value();
         else if (arg == "--frames") options.frames = positive(value());
         else if (arg == "--level") options.level = positive(value());
+        else if (arg == "--replay") options.replay = value();
+        else if (arg == "--replay-fast") options.replay_fast = true;
+        else if (arg == "--record") options.record = value();
         else if (arg == "--key") options.key = value();
         else if (arg == "--host" || arg == "--join") {
             if (options.port) throw std::runtime_error("Specify exactly one network role");
@@ -63,8 +67,15 @@ Options parse(int argc,char** argv) {
             options.height = static_cast<int>(h);
         } else throw std::runtime_error("Unknown option: " + std::string(arg));
     }
-    if (options.level > Campaign::level_count || options.frames > 10000 || (!options.capture.empty() && !options.frames)) {
+    if (options.level > Campaign::level_count || options.frames > 10000 || (!options.capture.empty() && !options.frames && options.replay.empty())) {
         throw std::runtime_error("Level or capture frame outside bounds");
+    }
+    if ((!options.replay.empty() && (options.port || options.level || options.frames || !options.record.empty())) ||
+        (options.replay_fast && options.replay.empty()) || (!options.record.empty() && options.port && !options.hosting)) {
+        throw std::runtime_error("Replay arguments conflict with level, frame or network options");
+    }
+    if (!options.record.empty() && std::filesystem::exists(options.record)) {
+        throw std::runtime_error("Recording destination already exists");
     }
     if (options.port && (options.key.size() < 4 || options.key.size() > 64)) {
         throw std::runtime_error("Network play requires a shared key of 4 to 64 characters");
@@ -90,6 +101,8 @@ public:
 private:
     void handle(Input input);
     void simulate(double elapsed);
+    void save_tape();
+    void finish_level();
     void trigger(GameEvent event);
     void poll_network(std::uint64_t now);
     void client_input(Command command);
@@ -116,6 +129,9 @@ private:
     double note_time_{};
     std::string note_;
     bool quit_{};
+    std::optional<Replay> script_, recording_;
+    std::size_t script_cursor_{};
+    bool recording_done_{}, script_done_{};
     std::unique_ptr<net::Session> network_;
     std::deque<net::InputFrame> history_;
     std::uint32_t epoch_{}, net_order_{}, net_jump_{}, net_use_{}, applied_input_{};
@@ -156,6 +172,10 @@ Application::Application(const Options& options)
             note_time_ = 5;
         }
         std::cout << "network=" << (options.hosting ? "host" : "client") << " port=" << network_->port() << '\n';
+    } else if (!options.replay.empty()) {
+        script_ = read_replay(options.replay);
+        if (script_->revision != campaign_.revision()) throw std::runtime_error("Replay campaign revision mismatch");
+        load(script_->start);
     } else if (options.level) load({options.level-1,0,false});
     std::cout << renderer_.adapter() << " audio=" << (audio_.enabled() ? "ready" : "unavailable") << '\n';
 }
@@ -165,8 +185,10 @@ void Application::load(Progress progress) {
         screen_ = Screen::finished;
         return;
     }
+    if (recording_ && !recording_->ticks.empty()) save_tape();
     world_ = campaign_.load(progress);
     progress_ = progress;
+    if (!options_.record.empty() && !recording_done_) recording_ = Replay{campaign_.revision(),progress,{}};
     screen_ = Screen::playing;
     selected_ = network_ && !options_.hosting ? 1U : 0U;
     if (network_ && options_.hosting) {
@@ -183,7 +205,7 @@ void Application::load(Progress progress) {
 }
 
 void Application::checkpoint() {
-    if (network_ && !options_.hosting) return;
+    if (script_ || (network_ && !options_.hosting)) return;
     try {
         campaign_.save_progress(options_.profile/"campaign.save",progress_);
     } catch (const std::exception& error) {
@@ -204,6 +226,7 @@ void Application::persist() {
 void Application::handle(Input input) {
     if (input.resized) renderer_.resize();
     if (input.quit) quit_ = true;
+    if (script_) return;
     if (input.fullscreen) {
         settings_.fullscreen = !settings_.fullscreen;
         platform_.set_fullscreen(settings_.fullscreen);
@@ -359,14 +382,31 @@ void Application::poll_network(std::uint64_t now) {
     }
 }
 
+void Application::save_tape() {
+    if (!recording_ || recording_->ticks.empty()) return;
+    write_replay(options_.record,*recording_);
+    recording_.reset();
+    recording_done_ = true;
+}
+
+void Application::finish_level() {
+    const bool final = progress_.level+1 == Campaign::level_count;
+    progress_ = {final ? progress_.level : progress_.level+1,0,final};
+    checkpoint();
+    save_tape();
+    screen_ = final ? Screen::finished : Screen::next;
+}
+
 void Application::simulate(double elapsed) {
     note_time_ = std::max(0.0,note_time_-elapsed);
     if (screen_ != Screen::playing) return;
     const auto cap = static_cast<double>(Game::timestep)*5;
     accumulator_ = std::min(accumulator_+elapsed,cap);
+    if (script_ && options_.replay_fast) accumulator_ = 4*static_cast<double>(Game::timestep);
     while (accumulator_ >= Game::timestep && screen_ == Screen::playing) {
         std::array<Command,2> pair{};
         pair[selected_] = pending_;
+        if (script_) pair = script_->ticks.at(script_cursor_).commands;
         pending_.jump = pending_.interact = false;
         if (network_ && !options_.hosting) {
             client_input(pair[1]);
@@ -379,13 +419,19 @@ void Application::simulate(double elapsed) {
         }
         world_->tick(pair);
         accumulator_ -= Game::timestep;
-        for (const auto event : world_->events()) trigger(event);
-        if (world_->completed()) {
-            const bool final = progress_.level+1 == Campaign::level_count;
-            progress_ = {final ? progress_.level : progress_.level+1,0,final};
-            checkpoint();
-            screen_ = final ? Screen::finished : Screen::next;
+        if (script_) {
+            const auto expected = script_->ticks[script_cursor_++].state;
+            if (world_->state_hash() != expected) throw std::runtime_error("Replay divergence at tick " + std::to_string(script_cursor_));
+            script_done_ = script_cursor_ == script_->ticks.size();
+            if (world_->completed() && !script_done_) throw std::runtime_error("Replay contains steps after completion");
         }
+        if (recording_) {
+            recording_->ticks.push_back({pair,world_->state_hash()});
+            if (recording_->ticks.size() == Replay::tick_limit) save_tape();
+        }
+        for (const auto event : world_->events()) trigger(event);
+        if (world_->completed()) finish_level();
+        if (script_done_) break;
     }
     const auto target = world_->player(selected_).body.feet + Vec3{0,0,-1.2f};
     const auto weight = static_cast<float>(1-std::exp(-elapsed*7));
@@ -481,7 +527,7 @@ int Application::run() {
         const auto logical_width = std::clamp(600.0f*static_cast<float>(width)/static_cast<float>(std::max(1,height)),440.0f,1800.0f);
         Canvas canvas(logical_width);
         paint(canvas);
-        if (options_.frames && drawn+1 == options_.frames && !options_.capture.empty()) {
+        if (((options_.frames && drawn+1 == options_.frames) || script_done_) && !options_.capture.empty()) {
             renderer_.capture_next(options_.capture);
         }
         std::optional<Vec3> remote;
@@ -492,9 +538,14 @@ int Application::run() {
         const auto items = world_->extract(std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f),remote);
         if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices())) {
             ++drawn;
-            if (options_.frames && drawn == options_.frames) break;
+            if ((options_.frames && drawn == options_.frames) || script_done_) break;
         } else SDL_Delay(10);
         if (options_.frames && now > stop_at) throw std::runtime_error("Window diagnostic timed out");
+    }
+    save_tape();
+    if (script_) {
+        std::cout << "replay_ticks=" << script_cursor_ << " final_hash=" << world_->state_hash()
+                  << " completed=" << world_->completed() << '\n';
     }
     const auto& report = renderer_.report();
     std::cout << "frames=" << drawn << " surface=" << report.width << 'x' << report.height
@@ -505,7 +556,7 @@ int Application::run() {
         std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received
                   << " connected=" << network_->connected() << '\n';
     }
-    return (!options_.frames || drawn == options_.frames) && renderer_.validation_errors() == 0 ? 0 : 1;
+    return (!options_.frames || drawn == options_.frames) && (!script_ || script_done_) && renderer_.validation_errors() == 0 ? 0 : 1;
 }
 
 }
@@ -515,7 +566,8 @@ int run_game(int argc,char** argv) {
         std::cout << "lantern-reach [--assets DIR] [--shaders DIR] [--profile DIR] [--validate]\n"
                      "              [--size WIDTHxHEIGHT] [--no-audio] [--level 1..3]\n"
                      "              [--frames N [--capture FILE.ppm]]\n"
-                     "              [--host PORT | --join IPV4 PORT] --key SHARED_KEY\n";
+                     "              [--host PORT | --join IPV4 PORT] --key SHARED_KEY\n"
+                     "              [--record FILE | --replay FILE [--replay-fast]]\n";
         return 0;
     }
     const auto options = parse(argc,argv);

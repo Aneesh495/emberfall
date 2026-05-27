@@ -1,15 +1,27 @@
-#include "emberfall/game.hpp"
+#include "emberfall/replay.hpp"
 
 #include <iostream>
 #include <stdexcept>
 
 using namespace ember;
 
-void wait(Game& game, unsigned ticks) {
+class RecordedGame : public Game {
+public:
+    RecordedGame(const Scene& scene, Replay* tape) : Game(scene), tape_(tape) {}
+    void tick(const std::array<Command,2>& commands) {
+        if (completed()) return;
+        Game::tick(commands);
+        if (tape_) tape_->ticks.push_back({commands,state_hash()});
+    }
+private:
+    Replay* tape_;
+};
+
+void wait(RecordedGame& game, unsigned ticks) {
     for (unsigned i=0; i<ticks; ++i) game.tick({});
 }
 
-void go(Game& game, std::size_t player, Vec3 target) {
+void go(RecordedGame& game, std::size_t player, Vec3 target) {
     for (int i=0; i<480; ++i) {
         auto movement = target-game.player(player).body.feet;
         movement.y = 0;
@@ -24,8 +36,8 @@ void go(Game& game, std::size_t player, Vec3 target) {
                              " moving to " + std::to_string(target.x) + ", " + std::to_string(target.z));
 }
 
-std::uint64_t exercise(const Scene& scene, unsigned level) {
-    Game game(scene);
+std::uint64_t exercise(const Scene& scene, unsigned level, Replay* tape = nullptr) {
+    RecordedGame game(scene,tape);
     if (level == 0) {
         go(game,0,{-2,0,3});
         go(game,1,{2,0,3});
@@ -56,12 +68,16 @@ std::uint64_t exercise(const Scene& scene, unsigned level) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) throw std::runtime_error("Pass the level directory");
+    if (argc < 2 || argc > 3) throw std::runtime_error("Pass the level directory and optional replay output directory");
     const std::filesystem::path levels = argv[1];
+    const Campaign campaign(levels);
     unsigned index = 0;
     for (const auto name : {"01-aperture.scene","02-prism.scene","03-meridian.scene"}) {
         const auto scene = load_scene(levels/name);
-        const auto first = exercise(scene,index);
+        Replay tape{campaign.revision(),{index,0,false},{}};
+        const auto first = exercise(scene,index,&tape);
+        if (check_replay(campaign,tape) != first) throw std::runtime_error("Replay verification diverged");
+        if (argc == 3) write_replay(std::filesystem::path(argv[2]) / (std::string(name)+".replay"),tape);
         if (exercise(scene,index) != first) throw std::runtime_error("Same-build repeated input diverged");
         std::cout << scene.title << " completed, hash " << first << '\n';
         ++index;

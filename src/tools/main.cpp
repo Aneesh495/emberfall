@@ -1,4 +1,5 @@
 #include "emberfall/editor.hpp"
+#include "emberfall/replay.hpp"
 
 #include <charconv>
 #include <iostream>
@@ -28,7 +29,15 @@ int main(int argc,char** argv) {
             ember::write_atomic(argv[3],ember::write_scene(document.scene()));
             return 0;
         }
-        std::cerr << "ember-tool compose INPUT OUTPUT [PREFAB ID X Y Z]...\n";
+        if (argc == 4 && std::string_view(argv[1]) == "replay-check") {
+            const ember::Campaign campaign(argv[2]);
+            const auto tape = ember::read_replay(argv[3]);
+            const auto hash = ember::check_replay(campaign,tape);
+            std::cout << "replay_ticks=" << tape.ticks.size() << " final_hash=" << hash << '\n';
+            return 0;
+        }
+        std::cerr << "ember-tool compose INPUT OUTPUT [PREFAB ID X Y Z]...\n"
+                     "ember-tool replay-check COOKED_LEVEL_DIRECTORY TAPE\n";
         return 2;
     } catch (const std::exception& error) {
         std::cerr << "ember-tool: " << error.what() << '\n';
