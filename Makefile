@@ -37,3 +37,15 @@ REPLAY ?=
 replay-check: cook
 	test -n "$(REPLAY)"
 	"$(BUILD)/ember-tool" replay-check "$(BUILD)/levels" "$(REPLAY)"
+
+.PHONY: bench stress render-bench physics-bench
+bench: bootstrap
+	cmake --build "$(BUILD)" --target runtime_bench
+	"$(BUILD)/runtime_bench" ecs
+physics-bench: bootstrap
+	cmake --build "$(BUILD)" --target runtime_bench
+	"$(BUILD)/runtime_bench" physics
+render-bench: bootstrap
+	cmake --build "$(BUILD)" --target gpu_stress
+	"$(BUILD)/gpu_stress" "$(BUILD)/shaders"
+stress: bench physics-bench render-bench

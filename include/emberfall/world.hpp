@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <stdexcept>
+#include <span>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -173,6 +174,15 @@ public:
     template<class... C, class F>
     void each(F&& action) const {
         run_query<const World, C...>(*this, std::forward<F>(action));
+    }
+
+    template<class... C, class F>
+    void chunks(F&& action) {
+        QueryScope scope(queries_);
+        for (auto& [signature,group] : tables_) {
+            if ((signature & mask<C...>) != mask<C...> || group.entities.empty()) continue;
+            std::invoke(action,std::span<const Entity>(group.entities),std::span<C>(group.template column<C>())...);
+        }
     }
 
     template<class F>
