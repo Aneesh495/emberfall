@@ -83,6 +83,15 @@ Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up) {
     return m;
 }
 
+Mat4 orthographic(float half_width,float half_height,float near_distance,float far_distance) {
+    auto m = Mat4::identity();
+    m(0,0) = 1/half_width;
+    m(1,1) = -1/half_height;
+    m(2,2) = 1/(near_distance-far_distance);
+    m(2,3) = near_distance/(near_distance-far_distance);
+    return m;
+}
+
 Mat4 perspective(float fov, float aspect, float near_distance, float far_distance) {
     const float cotangent = 1/std::tan(fov*0.5f);
     const float depth = near_distance - far_distance;

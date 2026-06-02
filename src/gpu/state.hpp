@@ -2,6 +2,7 @@
 
 #include "common.hpp"
 #include "render_graph.hpp"
+#include "emberfall/scheduler.hpp"
 
 #include <atomic>
 
@@ -13,6 +14,17 @@ struct Renderer::State {
     static constexpr std::uint32_t overlay_limit = 131072;
     static constexpr VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
+    static constexpr std::uint32_t shadow_size = 1536;
+    static constexpr std::size_t light_limit = 128;
+    struct Light {
+        std::array<float,4> position_radius;
+        std::array<float,4> color_power;
+    };
+    struct Lighting {
+        Mat4 shadow;
+        std::array<float,4> direction_count;
+        std::array<Light,light_limit> lights{};
+    };
     struct Image {
         VkImage image{};
         VkImageView view{};
@@ -29,9 +41,9 @@ struct Renderer::State {
         VkSemaphore acquire{};
         std::uint64_t finished{};
         VkQueryPool timer{};
-        Buffer instances, overlay;
-        Image hdr, depth;
-        VkDescriptorSet sample{};
+        Buffer instances, overlay, lighting;
+        Image hdr, depth, shadow;
+        VkDescriptorSet sample{}, light_set{};
     };
     struct Screen {
         VkImage image{};
@@ -48,10 +60,11 @@ struct Renderer::State {
     void clear_swapchain();
     bool rebuild_swapchain();
     bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay);
-    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count, std::uint32_t overlay_count);
+    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, const Mat4& light, std::uint32_t count, std::uint32_t shadow_count,
+                std::uint32_t overlay_count);
     void save_capture();
     void wait(std::uint64_t serial) const;
-    void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect);
+    void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect, VkExtent2D dimensions = {});
     void make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags use);
     void free(Image& image);
     void free(Buffer& buffer);
@@ -76,10 +89,12 @@ struct Renderer::State {
     std::array<Frame,slots> frames;
     VkSemaphore timeline{};
     VkDescriptorPool descriptors{};
-    VkDescriptorSetLayout sample_layout{};
-    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{};
-    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{};
-    VkSampler sampler{};
+    VkDescriptorSetLayout sample_layout{}, light_layout{};
+    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{}, shadow_layout{};
+    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{};
+    VkSampler sampler{}, shadow_sampler{};
+    Scheduler culling{4};
+    std::vector<std::uint8_t> visibility;
     Buffer geometry, capture;
     std::filesystem::path capture_file;
     bool capture_supported{};

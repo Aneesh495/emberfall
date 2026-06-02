@@ -13,6 +13,8 @@ struct View {
     float fov{0.88f};
     float exposure{1};
     bool antialias{true};
+    bool dense_mesh{};
+    float far_plane{160};
 };
 
 struct OverlayVertex {
@@ -24,6 +26,11 @@ struct FrameReport {
     std::uint32_t width{}, height{}, submitted{}, culled{};
     double gpu_ms{};
     std::uint64_t serial{};
+    std::uint32_t shadow_casters{}, lights{}, triangles{}, draw_calls{};
+    std::uint64_t timed_serial{};
+    std::array<std::uint64_t,4> timestamps{};
+    double timestamp_period_ns{};
+    unsigned timestamp_valid_bits{};
 };
 
 class Renderer {

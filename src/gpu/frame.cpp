@@ -36,25 +36,56 @@ void Renderer::State::wait(std::uint64_t value) const {
     check(vkWaitSemaphores(device,&info,5'000'000'000ULL),"Wait for frame completion timeline");
 }
 
-void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, std::uint32_t count, std::uint32_t overlay_count) {
+void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, const Mat4& light, std::uint32_t count, std::uint32_t shadow_count,
+                             std::uint32_t overlay_count) {
     const auto cmd = frame.commands;
     auto begin = vk<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(cmd,&begin),"Begin recording frame");
     if (frame.timer) {
-        vkCmdResetQueryPool(cmd,frame.timer,0,2);
+        vkCmdResetQueryPool(cmd,frame.timer,0,4);
         vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,frame.timer,0);
     }
+    const VkDeviceSize mesh_offset = view.dense_mesh ? 36*sizeof(gpu::Vertex) : 0;
+    const std::uint32_t vertices = view.dense_mesh ? 576U : 36U;
     const VkViewport viewport{0,0,static_cast<float>(extent.width),static_cast<float>(extent.height),0,1};
     const VkRect2D rect{{0,0},extent};
-    vkCmdSetViewport(cmd,0,1,&viewport);
-    vkCmdSetScissor(cmd,0,1,&rect);
+
     gpu::Resource hdr{frame.hdr.image,VK_IMAGE_ASPECT_COLOR_BIT};
     gpu::Resource depth{frame.depth.image,VK_IMAGE_ASPECT_DEPTH_BIT};
+    gpu::Resource shadow{frame.shadow.image,VK_IMAGE_ASPECT_DEPTH_BIT};
     gpu::Resource backbuffer{screen.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_UNDEFINED,
                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,0};
     const gpu::RenderGraph graph(cmd);
-    graph.pass({{hdr,gpu::ImageUse::hdr_output},{depth,gpu::ImageUse::depth_output}},[&] {
+    graph.pass({{shadow,gpu::ImageUse::depth_output}},[&] {
+        const VkRect2D area{{0,0},{shadow_size,shadow_size}};
+        const VkViewport shadow_view{0,0,shadow_size,shadow_size,0,1};
+        vkCmdSetViewport(cmd,0,1,&shadow_view);
+        vkCmdSetScissor(cmd,0,1,&area);
+        auto depth_attachment = vk<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
+        depth_attachment.imageView = frame.shadow.view;
+        depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth_attachment.clearValue.depthStencil.depth = 1;
+        auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
+        rendering.renderArea = area;
+        rendering.layerCount = 1;
+        rendering.pDepthAttachment = &depth_attachment;
+        vkCmdBeginRendering(cmd,&rendering);
+        vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shadow_pipeline);
+        const std::array buffers{geometry.buffer,frame.instances.buffer};
+        const std::array<VkDeviceSize,2> offsets{mesh_offset,instance_limit*sizeof(RenderItem)};
+        vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(buffers.size()),buffers.data(),offsets.data());
+        vkCmdPushConstants(cmd,shadow_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(light),&light);
+        if (shadow_count) vkCmdDraw(cmd,vertices,shadow_count,0,0);
+        vkCmdEndRendering(cmd);
+    });
+    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,1);
+    vkCmdSetViewport(cmd,0,1,&viewport);
+    vkCmdSetScissor(cmd,0,1,&rect);
+    graph.pass({{hdr,gpu::ImageUse::hdr_output},{depth,gpu::ImageUse::depth_output},
+                {shadow,gpu::ImageUse::shadow_sampled}},[&] {
         auto color = color_attachment(frame.hdr.view,{0.028f,0.044f,0.072f,1});
         auto depth_attachment = vk<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
         depth_attachment.imageView = frame.depth.view;
@@ -70,8 +101,9 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         rendering.pDepthAttachment = &depth_attachment;
         vkCmdBeginRendering(cmd,&rendering);
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,scene_pipeline);
+        vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,scene_layout,0,1,&frame.light_set,0,nullptr);
         const std::array buffers{geometry.buffer,frame.instances.buffer};
-        constexpr std::array<VkDeviceSize,2> offsets{};
+        const std::array<VkDeviceSize,2> offsets{mesh_offset,0};
         vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(buffers.size()),buffers.data(),offsets.data());
         struct Camera {
             Mat4 projection;
@@ -80,9 +112,10 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         static_assert(sizeof(Camera) == 80);
         vkCmdPushConstants(cmd,scene_layout,VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0,sizeof(constants),&constants);
-        if (count) vkCmdDraw(cmd,36,count,0,0);
+        if (count) vkCmdDraw(cmd,vertices,count,0,0);
         vkCmdEndRendering(cmd);
     });
+    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,2);
     graph.pass({{hdr,gpu::ImageUse::sampled},{backbuffer,gpu::ImageUse::hdr_output}},[&] {
         auto color = color_attachment(screen.view,{0,0,0,1});
         auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
@@ -117,7 +150,7 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         });
     }
     graph.pass({{backbuffer,gpu::ImageUse::present}},[]{});
-    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,1);
+    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,3);
     check(vkEndCommandBuffer(cmd),"Finish recording frame");
 }
 
@@ -134,12 +167,13 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     auto& frame = frames[serial % slots];
     wait(frame.finished);
     double elapsed = 0;
-    if (frame.finished && frame.timer) {
-        std::array<std::uint64_t,2> stamps{};
-        check(vkGetQueryPoolResults(device,frame.timer,0,2,sizeof(stamps),stamps.data(),sizeof(stamps[0]),
-                                    VK_QUERY_RESULT_64_BIT),"Read completed GPU frame timestamps");
+    const auto timed_serial = frame.finished;
+    std::array<std::uint64_t,4> stamps{};
+    if (timed_serial && frame.timer) {
+        check(vkGetQueryPoolResults(device,frame.timer,0,4,sizeof(stamps),stamps.data(),sizeof(stamps[0]),
+                                    VK_QUERY_RESULT_64_BIT),"Read completed GPU pass timestamps");
         const auto mask = timestamp_bits == 64 ? std::numeric_limits<std::uint64_t>::max() : (1ULL<<timestamp_bits)-1;
-        elapsed = static_cast<double>((stamps[1]-stamps[0]) & mask)*properties.limits.timestampPeriod*1e-6;
+        elapsed = static_cast<double>((stamps[3]-stamps[0]) & mask)*properties.limits.timestampPeriod*1e-6;
     }
     std::uint32_t index = 0;
     const auto acquired = vkAcquireNextImageKHR(device,swapchain,1'000'000'000ULL,frame.acquire,nullptr,&index);
@@ -152,15 +186,51 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     auto& screen = screens.at(index);
     check(vkResetCommandPool(device,frame.pool,0),"Reset frame command pool");
     const auto aspect = static_cast<float>(extent.width)/static_cast<float>(extent.height);
-    const auto camera = perspective(view.fov,aspect,0.1f,160.0f)*look_at(view.eye,view.target,{0,1,0});
-    std::uint32_t count = 0;
-    for (const auto& item : items) {
-        if (!gpu::visible(camera,item.model)) continue;
-        std::memcpy(static_cast<std::byte*>(frame.instances.mapped)+count*sizeof(item),&item,sizeof(item));
-        ++count;
+    const auto camera = perspective(view.fov,aspect,0.1f,view.far_plane)*look_at(view.eye,view.target,{0,1,0});
+    const Vec3 direction = unit(Vec3{-0.45f,0.82f,0.24f});
+    const Vec3 anchor{std::round(view.target.x*32)/32,0,std::round(view.target.z*32)/32};
+    const auto light = orthographic(18,18,0.5f,85)*look_at(anchor+direction*32,anchor,{0,1,0});
+    const auto mark = [&](std::size_t start,std::size_t end) {
+        for (std::size_t i=start; i<end; ++i) {
+            visibility[i] = static_cast<std::uint8_t>((gpu::visible(camera,items[i].model) ? 1U : 0U) |
+                (gpu::visible(light,items[i].model) ? 2U : 0U));
+        }
+    };
+    if (items.size() < 1024) mark(0,items.size());
+    else {
+        std::vector<Task> tasks;
+        for (unsigned i=0; i<4; ++i) {
+            tasks.push_back({{},{{0,false},{static_cast<ResourceId>(i+1),true}},[&,i](std::stop_token) {
+                mark(items.size()*i/4,items.size()*(i+1)/4);
+            }});
+        }
+        culling.run(Schedule(std::move(tasks)));
     }
+    std::uint32_t count = 0, shadow_count = 0;
+    Lighting lighting{light,{direction.x,direction.y,direction.z,0},{}};
+    std::size_t lamps = 0;
+    auto* upload = static_cast<std::byte*>(frame.instances.mapped);
+    for (std::size_t i=0; i<items.size(); ++i) {
+        const auto& item = items[i];
+        if (visibility[i] & 1U) {
+            std::memcpy(upload+count*sizeof(item),&item,sizeof(item));
+            ++count;
+        }
+        if (visibility[i] & 2U) {
+            std::memcpy(upload+(instance_limit+shadow_count)*sizeof(item),&item,sizeof(item));
+            ++shadow_count;
+        }
+        if (item.emission > 0.6f && lamps < light_limit) {
+            const auto p = transform_point(item.model,{});
+            lighting.lights[lamps++] = {{p.x,p.y+0.2f,p.z,3.4f},
+                {item.color.x,item.color.y,item.color.z,std::min(item.emission,4.0f)*1.3f}};
+        }
+    }
+    lighting.direction_count[3] = static_cast<float>(lamps);
+    static_assert(sizeof(Lighting) == 80+32*light_limit);
+    std::memcpy(frame.lighting.mapped,&lighting,sizeof(lighting));
     if (!overlay.empty()) std::memcpy(frame.overlay.mapped,overlay.data(),overlay.size_bytes());
-    record(frame,screen,view,camera,count,static_cast<std::uint32_t>(overlay.size()));
+    record(frame,screen,view,camera,light,count,shadow_count,static_cast<std::uint32_t>(overlay.size()));
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
     acquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -196,7 +266,12 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         wait(frame.finished);
         save_capture();
     }
-    report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial};
+    const auto triangles = count*(view.dense_mesh ? 192U : 12U);
+    const unsigned draws = 1 + static_cast<unsigned>(count>0) + static_cast<unsigned>(shadow_count>0) +
+                           static_cast<unsigned>(!overlay.empty());
+    report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
+              shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
+              properties.limits.timestampPeriod,timestamp_bits};
     return true;
 }
 

@@ -60,6 +60,7 @@ Vec3 transform_point(const Mat4& matrix, Vec3 point);
 Mat4 transform_matrix(Vec3 position, Quat rotation = {}, Vec3 scale = {1,1,1});
 std::optional<Mat4> inverse_affine(const Mat4& m);
 Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up);
+Mat4 orthographic(float half_width,float half_height,float near_distance,float far_distance);
 Mat4 perspective(float vertical_radians, float aspect, float near_distance, float far_distance);
 
 }

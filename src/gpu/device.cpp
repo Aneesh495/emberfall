@@ -65,9 +65,14 @@ void Renderer::State::init(SDL_Window* owner, std::filesystem::path path, bool v
     create_device();
     create_pipeline_layouts();
     create_frames();
-    const auto vertices = gpu::cube();
-    make_buffer(geometry,sizeof(vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    std::memcpy(geometry.mapped,vertices.data(),sizeof(vertices));
+    auto vertices = gpu::cube(1);
+    const auto dense = gpu::cube(4);
+    vertices.insert(vertices.end(),dense.begin(),dense.end());
+    const auto bytes = vertices.size()*sizeof(gpu::Vertex);
+    make_buffer(geometry,bytes,VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    std::memcpy(geometry.mapped,vertices.data(),bytes);
+    shadow_pipeline = gpu::pipeline(device,shaders,shadow_layout,VK_FORMAT_UNDEFINED,depth_format,gpu::Pipeline::shadow);
+    visibility.resize(instance_limit);
     scene_pipeline = gpu::pipeline(device,shaders,scene_layout,hdr_format,depth_format,gpu::Pipeline::scene);
 }
 
@@ -152,8 +157,9 @@ void Renderer::State::create_device() {
         vkGetPhysicalDeviceFormatProperties(adapter,depth_format,&depth);
         constexpr auto required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
                                   VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        constexpr auto required_depth = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
         if ((hdr.optimalTilingFeatures & required) != required ||
-            !(depth.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) continue;
+            (depth.optimalTilingFeatures & required_depth) != required_depth) continue;
         const auto extensions = enumerate<VkExtensionProperties>([&](auto count, auto* list) {
             return vkEnumerateDeviceExtensionProperties(adapter,nullptr,count,list);
         });
@@ -206,18 +212,24 @@ Renderer::State::~State() {
         for (auto& frame : frames) {
             free(frame.instances);
             free(frame.overlay);
+            free(frame.lighting);
+            free(frame.shadow);
             vkDestroyQueryPool(device,frame.timer,nullptr);
             vkDestroySemaphore(device,frame.acquire,nullptr);
             vkDestroyCommandPool(device,frame.pool,nullptr);
         }
         free(geometry);
         vkDestroySampler(device,sampler,nullptr);
+        vkDestroySampler(device,shadow_sampler,nullptr);
         vkDestroySemaphore(device,timeline,nullptr);
         vkDestroyPipeline(device,scene_pipeline,nullptr);
+        vkDestroyPipeline(device,shadow_pipeline,nullptr);
         vkDestroyPipelineLayout(device,scene_layout,nullptr);
+        vkDestroyPipelineLayout(device,shadow_layout,nullptr);
         vkDestroyPipelineLayout(device,tonemap_layout,nullptr);
         vkDestroyPipelineLayout(device,overlay_layout,nullptr);
         vkDestroyDescriptorSetLayout(device,sample_layout,nullptr);
+        vkDestroyDescriptorSetLayout(device,light_layout,nullptr);
         vkDestroyDevice(device,nullptr);
     }
     if (surface) SDL_Vulkan_DestroySurface(instance,surface,nullptr);

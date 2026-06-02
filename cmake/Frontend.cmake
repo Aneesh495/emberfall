@@ -28,7 +28,7 @@ function(ember_shaders target)
     endforeach()
     add_custom_target(${target} ALL DEPENDS ${outputs})
 endfunction()
-ember_shaders(emberfall_shaders scene.vert scene.frag screen.vert tonemap.frag overlay.vert overlay.frag)
+ember_shaders(emberfall_shaders scene.vert scene.frag screen.vert tonemap.frag overlay.vert overlay.frag shadow.vert)
 
 add_library(emberfall_renderer
     src/gpu/device.cpp src/gpu/resources.cpp src/gpu/pipeline.cpp src/gpu/frame.cpp)
@@ -56,3 +56,8 @@ install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/levels/" DESTINATION levels
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME Emberfall.txt)
 install(FILES "${sdl_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL3.txt)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/PLAY.md" DESTINATION .)
+
+if(BUILD_TESTING)
+    add_executable(gpu_stress tests/gpu_stress.cpp)
+    target_link_libraries(gpu_stress PRIVATE emberfall_renderer)
+endif()

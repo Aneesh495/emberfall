@@ -29,11 +29,12 @@ VkImageView Renderer::State::make_view(VkImage image, VkFormat format, VkImageAs
     return result;
 }
 
-void Renderer::State::make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect) {
+void Renderer::State::make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect, VkExtent2D dimensions) {
     auto info = vk<VkImageCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
     info.imageType = VK_IMAGE_TYPE_2D;
     info.format = format;
-    info.extent = {extent.width,extent.height,1};
+    if (!dimensions.width) dimensions = extent;
+    info.extent = {dimensions.width,dimensions.height,1};
     info.mipLevels = 1;
     info.arrayLayers = 1;
     info.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -88,11 +89,25 @@ void Renderer::State::create_pipeline_layouts() {
     sample_info.bindingCount = 1;
     sample_info.pBindings = &binding;
     check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&sample_layout),"Create tonemap descriptor layout");
+    const std::array<VkDescriptorSetLayoutBinding,2> light_bindings{{
+        {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
+    }};
+    sample_info.bindingCount = static_cast<std::uint32_t>(light_bindings.size());
+    sample_info.pBindings = light_bindings.data();
+    check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&light_layout),"Create scene light descriptors");
     const VkPushConstantRange camera{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,0,80};
     auto layout = vk<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
     layout.pushConstantRangeCount = 1;
     layout.pPushConstantRanges = &camera;
+    layout.setLayoutCount = 1;
+    layout.pSetLayouts = &light_layout;
     check(vkCreatePipelineLayout(device,&layout,nullptr,&scene_layout),"Create scene pipeline layout");
+    const VkPushConstantRange light_camera{VK_SHADER_STAGE_VERTEX_BIT,0,64};
+    layout.setLayoutCount = 0;
+    layout.pSetLayouts = nullptr;
+    layout.pPushConstantRanges = &light_camera;
+    check(vkCreatePipelineLayout(device,&layout,nullptr,&shadow_layout),"Create shadow pipeline layout");
     const VkPushConstantRange display{VK_SHADER_STAGE_FRAGMENT_BIT,0,12};
     layout.setLayoutCount = 1;
     layout.pSetLayouts = &sample_layout;
@@ -109,6 +124,8 @@ void Renderer::State::create_pipeline_layouts() {
     sampling.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sampling.addressModeU = sampling.addressModeV = sampling.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     check(vkCreateSampler(device,&sampling,nullptr,&sampler),"Create HDR sampler");
+    sampling.magFilter = sampling.minFilter = VK_FILTER_NEAREST;
+    check(vkCreateSampler(device,&sampling,nullptr,&shadow_sampler),"Create shadow comparison sampler");
 }
 
 void Renderer::State::create_frames() {
@@ -131,11 +148,14 @@ void Renderer::State::create_frames() {
         if (timestamp_bits) {
             auto query = vk<VkQueryPoolCreateInfo>(VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO);
             query.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            query.queryCount = 2;
+            query.queryCount = 4;
             check(vkCreateQueryPool(device,&query,nullptr,&frame.timer),"Create frame timer queries");
         }
-        make_buffer(frame.instances,instance_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.instances,2*instance_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.lighting,sizeof(Lighting),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        make_image(frame.shadow,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                   VK_IMAGE_ASPECT_DEPTH_BIT,{shadow_size,shadow_size});
     }
 }
 
@@ -151,6 +171,7 @@ void Renderer::State::clear_swapchain() {
         free(frame.hdr);
         free(frame.depth);
         frame.sample = nullptr;
+        frame.light_set = nullptr;
     }
     for (const auto& screen : screens) {
         vkDestroySemaphore(device,screen.ready,nullptr);
@@ -226,11 +247,13 @@ bool Renderer::State::rebuild_swapchain() {
     }
     tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::tonemap);
     overlay_pipeline = gpu::pipeline(device,shaders,overlay_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::overlay);
-    const VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,slots};
+    const std::array<VkDescriptorPoolSize,2> pool_sizes{{
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots}
+    }};
     auto pool = vk<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
-    pool.maxSets = slots;
-    pool.poolSizeCount = 1;
-    pool.pPoolSizes = &pool_size;
+    pool.maxSets = 2*slots;
+    pool.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
+    pool.pPoolSizes = pool_sizes.data();
     check(vkCreateDescriptorPool(device,&pool,nullptr,&descriptors),"Create frame descriptors");
     for (auto& frame : frames) {
         make_image(frame.hdr,hdr_format,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT);
@@ -247,6 +270,21 @@ bool Renderer::State::rebuild_swapchain() {
         update.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         update.pImageInfo = &image;
         vkUpdateDescriptorSets(device,1,&update,0,nullptr);
+        set.pSetLayouts = &light_layout;
+        check(vkAllocateDescriptorSets(device,&set,&frame.light_set),"Allocate light descriptors");
+        const VkDescriptorBufferInfo buffer{frame.lighting.buffer,0,sizeof(Lighting)};
+        const VkDescriptorImageInfo shadow{shadow_sampler,frame.shadow.view,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+        auto lighting = vk<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+        lighting.dstSet = frame.light_set;
+        lighting.descriptorCount = 1;
+        lighting.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        lighting.pBufferInfo = &buffer;
+        auto depth = update;
+        depth.dstSet = frame.light_set;
+        depth.dstBinding = 1;
+        depth.pImageInfo = &shadow;
+        const std::array writes{lighting,depth};
+        vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
     }
     dirty = false;
     return true;
