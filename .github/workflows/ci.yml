@@ -1,0 +1,42 @@
+name: Engine diagnostics
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emberfall-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install build and software Vulkan diagnostic dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libvulkan-dev glslang-tools mesa-vulkan-drivers vulkan-validationlayers xvfb xauth libx11-dev libxext-dev libxfixes-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev
+      - name: Build and check documentation
+        run: |
+          make build
+          make docs
+      - name: Execute CPU diagnostics and negative controls
+        run: |
+          make acceptance PROFILE=cpu-diagnostic RUN_ID=linux-ci
+          make verify EVIDENCE=evidence/linux-ci
+          make controls EVIDENCE=evidence/linux-ci
+      - name: Exercise software Vulkan through resize
+        run: xvfb-run -a build/gpu_smoke build/shaders
+      - name: Verify standalone Linux diagnostic package
+        run: |
+          make package-game
+          mkdir build/unpacked
+          tar -C build/unpacked -xzf dist/the-lantern-reach-linux-x86_64.tar.gz
+          (cd build/unpacked/The-Lantern-Reach && sha256sum -c SHA256SUMS)
+          xvfb-run -a build/unpacked/The-Lantern-Reach/play --no-audio --size 680x420 --profile build/ci-profile --replay evidence/linux-ci/replays/03-meridian.scene.replay --replay-fast

@@ -60,6 +60,8 @@ public:
         for (const auto event : game_->events()) {
             if (event.signal == Signal::mirror) ++mirrors_;
             if (event.signal == Signal::exit) ++exits_;
+            events_ += std::to_string(time_) + "," + std::to_string(epoch_) + "," + std::to_string(level_) + "," +
+                       std::to_string(static_cast<unsigned>(event.signal)) + "," + std::to_string(event.subject) + "\n";
         }
         if (order_%3 == 0) host_->broadcast({epoch_,host_->last_input(),level_,game_->snapshot()});
         if (auto frame = client_->receive()) {
@@ -93,8 +95,9 @@ public:
         require(game_->completed() && observed_->completed(),"Server or client did not reach completion");
     }
 
-    void check_all() const {
+    void check_all(const std::filesystem::path& trace) const {
         require(mirrors_ == 1 && exits_ == 3,"Irreversible events did not occur exactly once");
+        if (!trace.empty()) write_atomic(trace,"time_ms,epoch,level,signal,subject\n"+events_);
         std::cout << "completed=3 mirror_events=" << mirrors_ << " exit_events=" << exits_
                   << " sent=" << host_->stats().sent << " received=" << host_->stats().received
                   << " duplicates=" << host_->stats().duplicate << " rejected=" << host_->stats().rejected << '\n';
@@ -111,12 +114,13 @@ private:
     const Campaign& campaign_;
     std::unique_ptr<Session> host_, client_;
     std::unique_ptr<Game> game_, observed_;
+    std::string events_;
     std::uint64_t time_{};
     unsigned level_{}, epoch_{}, seen_epoch_{}, order_{}, jump_{}, use_{}, mirrors_{}, exits_{};
 };
 
 int main(int argc,char** argv) {
-    if (argc!=2) throw std::runtime_error("Pass level directory");
+    if (argc<2 || argc>3) throw std::runtime_error("Pass level directory and optional event trace");
     require(newer(1,0xffffffffU) && !newer(0xffffffffU,1),"Sequence wrap mismatch");
     auto wire = encode_packet({Type::receipt,22,1,0,0,{}});
     require(wire.size()==28 && wire[0]=='E' && wire[1]=='M' && decode_packet(wire).has_value(),"Wire header mismatch");
@@ -159,5 +163,5 @@ int main(int argc,char** argv) {
     network.hold(285);
     network.move(0,{0,0,-11});
     network.check_level();
-    network.check_all();
+    network.check_all(argc == 3 ? argv[2] : "");
 }
