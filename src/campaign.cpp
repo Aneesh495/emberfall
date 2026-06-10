@@ -1,4 +1,5 @@
 #include "emberfall/campaign.hpp"
+#include "emberfall/scene_stream.hpp"
 
 #include <iomanip>
 #include <limits>
@@ -52,9 +53,13 @@ std::uint64_t fingerprint(std::string_view bytes) {
 
 Campaign::Campaign(const std::filesystem::path& directory) {
     std::string source;
+    SceneStream stream(directory,8*1024*1024);
+    std::array<SceneHandle,level_count> handles{};
+    for (std::size_t i=0; i<names.size(); ++i) handles[i] = stream.request(names[i],static_cast<unsigned>(names.size()-i));
     for (std::size_t i=0; i<names.size(); ++i) {
-        scenes_[i] = load_scene(directory / names[i]);
-        source += write_scene(scenes_[i]);
+        scenes_[i] = stream.wait(handles[i],std::chrono::seconds(5));
+        if (!scenes_[i]) throw std::runtime_error(stream.inspect(handles[i]).error);
+        source += write_scene(*scenes_[i]);
     }
     revision_ = fingerprint(source);
 }
