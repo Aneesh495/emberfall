@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emberfall/collision.hpp"
+#include "emberfall/navigation.hpp"
 #include "emberfall/world.hpp"
 
 namespace ember {
@@ -77,6 +78,7 @@ public:
     std::uint64_t state_hash() const;
     void restore_checkpoint(SceneId id);
     SimulationState snapshot() const;
+    Route route(Vec3 start,Vec3 goal) const;
     void apply_snapshot(const SimulationState& snapshot);
 
 private:

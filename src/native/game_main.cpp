@@ -103,6 +103,7 @@ private:
     void simulate(double elapsed);
     void save_tape();
     void finish_level();
+    Command companion();
     void trigger(GameEvent event);
     void poll_network(std::uint64_t now);
     void client_input(Command command);
@@ -128,7 +129,9 @@ private:
     double accumulator_{};
     double note_time_{};
     std::string note_;
-    bool quit_{};
+    bool quit_{}, follow_{};
+    std::deque<Vec3> route_;
+    std::uint64_t route_tick_{};
     std::optional<Replay> script_, recording_;
     std::size_t script_cursor_{};
     bool recording_done_{}, script_done_{};
@@ -202,6 +205,9 @@ void Application::load(Progress progress) {
     eye_ = focus_ + Vec3{1.4f,7.2f,8.2f};
     accumulator_ = 0;
     pending_ = {};
+    follow_ = false;
+    route_.clear();
+    route_tick_ = 0;
 }
 
 void Application::checkpoint() {
@@ -243,6 +249,16 @@ void Application::handle(Input input) {
         if (input.select && !network_) {
             selected_ ^= 1;
             pending_ = {};
+            follow_ = false;
+            route_.clear();
+            route_tick_ = 0;
+        }
+        if (input.follow && !network_) {
+            follow_ = !follow_;
+            route_.clear();
+            route_tick_ = 0;
+            note_ = follow_ ? "Companion following" : "Companion holding position";
+            note_time_ = 2;
         }
         if (input.restart && (!network_ || options_.hosting)) {
             load({progress_.level,world_->checkpoint(),false});
@@ -397,6 +413,27 @@ void Application::finish_level() {
     screen_ = final ? Screen::finished : Screen::next;
 }
 
+Command Application::companion() {
+    const auto goal = world_->player(selected_).body.feet;
+    const auto current = world_->player(selected_^1).body.feet;
+    if (!follow_ || length(goal-current)<1.25f) {
+        route_.clear();
+        return {};
+    }
+    if (world_->ticks()>=route_tick_) {
+        const auto planned = world_->route(current,goal);
+        route_.assign(planned.waypoints.begin(),planned.waypoints.end());
+        route_tick_ = world_->ticks()+8;
+    }
+    while (!route_.empty()) {
+        auto delta = route_.front()-current;
+        delta.y = 0;
+        if (length(delta)>0.12f) return Command{unit(delta)*std::min(0.86f,length(delta)*2.4f)};
+        route_.pop_front();
+    }
+    return {};
+}
+
 void Application::simulate(double elapsed) {
     note_time_ = std::max(0.0,note_time_-elapsed);
     if (screen_ != Screen::playing) return;
@@ -407,6 +444,7 @@ void Application::simulate(double elapsed) {
         std::array<Command,2> pair{};
         pair[selected_] = pending_;
         if (script_) pair = script_->ticks.at(script_cursor_).commands;
+        else if (!network_) pair[selected_^1] = companion();
         pending_.jump = pending_.interact = false;
         if (network_ && !options_.hosting) {
             client_input(pair[1]);
@@ -462,10 +500,10 @@ void Application::paint(Canvas& canvas) const {
         const auto player_label = selected_ ? "GLEAM" : "EMBER";
         const auto status = std::string(player_label) + (network_ ?
             (network_->connected() ? "   /   CO-OP CONNECTED" : "   /   WAITING FOR PEER") :
-            (selected_ ? "   /   EMBER HOLDING" : "   /   GLEAM HOLDING"));
+            (follow_ ? "   /   COMPANION FOLLOWING" : selected_ ? "   /   EMBER HOLDING" : "   /   GLEAM HOLDING"));
         canvas.text(23,548,1.7f,status,selected_ ? cyan : amber);
         canvas.wrapped(23,572,1.43f,network_ ? "WASD MOVE   SPACE JUMP   E USE   CTRL CROUCH   ESC PAUSE" :
-                       "WASD MOVE   SPACE JUMP   E USE   TAB SWITCH   CTRL CROUCH   ESC PAUSE",muted);
+                       "WASD MOVE   SPACE JUMP   E USE   TAB SWITCH   F FOLLOW   ESC PAUSE",muted);
         if (note_time_ > 0) {
             canvas.box(22,111,std::min(canvas.width()-44,370.0f),34,panel);
             canvas.wrapped(32,121,1.55f,note_.substr(0,120),cyan);

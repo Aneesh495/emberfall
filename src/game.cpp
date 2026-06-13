@@ -310,6 +310,8 @@ std::vector<RenderItem> Game::extract(float alpha, std::optional<Vec3> remote_fi
     return output;
 }
 
+Route Game::route(Vec3 start,Vec3 goal) const { return find_route(collision_,start,goal); }
+
 SimulationState Game::snapshot() const {
     SimulationState result{ticks_,checkpoint_,completed_,{player(0),player(1)},{}};
     for (const auto& [id,e] : entities_) {

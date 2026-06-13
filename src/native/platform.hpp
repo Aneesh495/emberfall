@@ -12,7 +12,7 @@ namespace ember::native {
 struct Input {
     Vec3 movement;
     bool quit{}, resized{}, pause{}, enter{}, select{}, jump{}, interact{}, crouch{}, fullscreen{};
-    bool up{}, down{}, left{}, right{}, lost_focus{}, restart{};
+    bool up{}, down{}, left{}, right{}, lost_focus{}, restart{}, follow{};
 };
 
 class Platform {

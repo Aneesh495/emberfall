@@ -75,6 +75,7 @@ Input Platform::input(const std::function<void(const SDL_Event&)>& observer) {
             case SDL_SCANCODE_LEFT: input.left = true; break;
             case SDL_SCANCODE_RIGHT: input.right = true; break;
             case SDL_SCANCODE_R: input.restart = true; break;
+            case SDL_SCANCODE_F: input.follow = true; break;
             default: break;
             }
             break;
@@ -85,6 +86,7 @@ Input Platform::input(const std::function<void(const SDL_Event&)>& observer) {
             case SDL_GAMEPAD_BUTTON_EAST: input.interact = true; break;
             case SDL_GAMEPAD_BUTTON_NORTH: input.select = true; break;
             case SDL_GAMEPAD_BUTTON_START: input.pause = true; break;
+            case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: input.follow = true; break;
             case SDL_GAMEPAD_BUTTON_DPAD_UP: input.up = true; break;
             case SDL_GAMEPAD_BUTTON_DPAD_DOWN: input.down = true; break;
             case SDL_GAMEPAD_BUTTON_DPAD_LEFT: input.left = true; break;
