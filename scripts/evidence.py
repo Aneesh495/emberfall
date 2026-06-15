@@ -4,6 +4,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import re
@@ -72,7 +73,11 @@ def main():
         command = [str(item) for item in command]
         with out.open("wb") as output, err.open("wb") as error:
             try:
-                result = subprocess.run(command, stdout=output, stderr=error, cwd=root, timeout=timeout)
+                environment = os.environ.copy()
+                layer_library = environment.get("EMBERFALL_VALIDATION_LIB")
+                if layer_library and name in ("gpu_smoke", "render"):
+                    environment["DYLD_LIBRARY_PATH"] = layer_library
+                result = subprocess.run(command, stdout=output, stderr=error, cwd=root, timeout=timeout, env=environment)
                 code = result.returncode
             except subprocess.TimeoutExpired:
                 code = 124

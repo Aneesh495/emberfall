@@ -4,6 +4,7 @@
 #include <iostream>
 #include <random>
 #include <stdexcept>
+#include <thread>
 
 using namespace ember;
 using namespace ember::net;
@@ -75,19 +76,29 @@ public:
     void hold(unsigned ticks) { for (unsigned i=0; i<ticks; ++i) tick(); }
 
     void move(unsigned player,Vec3 target) {
+        unsigned still = 0;
         for (unsigned i=0; i<720; ++i) {
             auto offset = target - (player == 0 ? game_->player(player) : observed_->player(player)).body.feet;
             offset.y = 0;
-            if (length(offset) < 0.07f || game_->completed()) {
-                hold(13);
-                return;
+            if (game_->completed()) return;
+            if (length(offset) < 0.07f) {
+                tick();
+                if (++still == 15) return;
+                continue;
             }
+            still = 0;
             const auto movement = unit(offset)*std::min(1.0f,length(offset)*1.6f);
             tick(player == 0 ? Command{movement} : Command{},player == 1 ? Command{movement} : Command{});
         }
         const auto feet = game_->player(player).body.feet;
         throw std::runtime_error("Network movement stalled in level " + std::to_string(level_) +
-                                 " at x=" + std::to_string(feet.x) + " z=" + std::to_string(feet.z));
+                                 " slot=" + std::to_string(player) + " x=" + std::to_string(feet.x) +
+                                 " z=" + std::to_string(feet.z) + " target x=" + std::to_string(target.x) +
+                                 " z=" + std::to_string(target.z));
+    }
+
+    void check_ferry_support(SceneId support) const {
+        require(game_->player(0).body.ground == support,"Ferry passenger support mismatch");
     }
 
     void check_level() {
@@ -108,6 +119,8 @@ private:
         time_ += 16;
         host_->poll(time_);
         if (client_) client_->poll(time_);
+        // Give real sockets time to deliver each scheduled virtual-clock burst.
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
         host_->poll(time_);
     }
 
@@ -159,8 +172,10 @@ int main(int argc,char** argv) {
 
     network.level(2);
     network.move(0,{0,0,3.55f});
+    network.check_ferry_support(3);
     network.move(1,{2.8f,0,7});
     network.hold(285);
+    network.check_ferry_support(2);
     network.move(0,{0,0,-11});
     network.check_level();
     network.check_all(argc == 3 ? argv[2] : "");

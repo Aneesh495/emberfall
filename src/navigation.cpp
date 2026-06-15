@@ -14,7 +14,6 @@ constexpr Vec3 half{0.28f,0.725f,0.28f};
 
 struct Cell {
     int x{}, z{};
-    friend bool operator==(Cell,Cell) = default;
 };
 
 Cell cell(Vec3 point) {
