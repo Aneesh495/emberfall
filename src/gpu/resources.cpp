@@ -154,6 +154,8 @@ void Renderer::State::create_frames() {
         make_buffer(frame.instances,2*instance_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.lighting,sizeof(Lighting),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        make_buffer(frame.skin,skin_vertex_limit*sizeof(MeshVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.skin_instances,skin_mesh_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_image(frame.shadow,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                    VK_IMAGE_ASPECT_DEPTH_BIT,{shadow_size,shadow_size});
     }

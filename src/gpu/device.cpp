@@ -213,6 +213,8 @@ Renderer::State::~State() {
             free(frame.instances);
             free(frame.overlay);
             free(frame.lighting);
+            free(frame.skin);
+            free(frame.skin_instances);
             free(frame.shadow);
             vkDestroyQueryPool(device,frame.timer,nullptr);
             vkDestroySemaphore(device,frame.acquire,nullptr);

@@ -41,7 +41,7 @@ struct Renderer::State {
         VkSemaphore acquire{};
         std::uint64_t finished{};
         VkQueryPool timer{};
-        Buffer instances, overlay, lighting;
+        Buffer instances, overlay, lighting, skin, skin_instances;
         Image hdr, depth, shadow;
         VkDescriptorSet sample{}, light_set{};
     };
@@ -59,9 +59,12 @@ struct Renderer::State {
     void create_frames();
     void clear_swapchain();
     bool rebuild_swapchain();
-    bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay);
+    bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay,
+              std::span<const SkinBatch> meshes);
+    static constexpr std::size_t skin_vertex_limit = 4096, skin_mesh_limit = 16;
+    struct SkinDraw { std::uint32_t first{}, count{}; };
     void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, const Mat4& light, std::uint32_t count, std::uint32_t shadow_count,
-                std::uint32_t overlay_count);
+                std::uint32_t overlay_count,std::span<const SkinDraw> meshes);
     void save_capture();
     void wait(std::uint64_t serial) const;
     void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect, VkExtent2D dimensions = {});

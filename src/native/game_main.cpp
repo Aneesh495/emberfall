@@ -573,8 +573,10 @@ int Application::run() {
             const float weight = std::clamp(static_cast<float>(now/1'000'000-sample_time_)/50,0.0f,1.0f);
             remote = lerp(remote_before_,remote_after_,weight);
         }
-        const auto items = world_->extract(std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f),remote);
-        if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices())) {
+        const auto alpha = std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f);
+        const auto items = world_->extract(alpha,remote);
+        const auto animation = world_->skin(alpha,remote);
+        if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices(),animation)) {
             ++drawn;
             if ((options_.frames && drawn == options_.frames) || script_done_) break;
         } else SDL_Delay(10);

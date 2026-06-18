@@ -40,7 +40,8 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     void resize();
-    bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay = {});
+    bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay = {},
+              std::span<const SkinBatch> meshes = {});
     void capture_next(std::filesystem::path file);
     const FrameReport& report() const;
     std::string adapter() const;

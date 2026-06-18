@@ -34,7 +34,7 @@ std::vector<T> enumerate(Enumerate&& call) {
     return out;
 }
 
-struct Vertex { Vec3 position, normal; };
+using Vertex = MeshVertex;
 std::vector<Vertex> cube(unsigned subdivisions);
 bool visible(const Mat4& view_projection, const Mat4& model);
 enum class Pipeline { scene, tonemap, overlay, shadow };

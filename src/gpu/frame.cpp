@@ -21,8 +21,8 @@ VkRenderingAttachmentInfo color_attachment(VkImageView view, std::array<float,4>
 
 }
 
-bool Renderer::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay) {
-    return state_->draw(items,view,overlay);
+bool Renderer::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes) {
+    return state_->draw(items,view,overlay,meshes);
 }
 
 void Renderer::capture_next(std::filesystem::path file) { state_->capture_file = std::move(file); }
@@ -37,7 +37,7 @@ void Renderer::State::wait(std::uint64_t value) const {
 }
 
 void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, const Mat4& light, std::uint32_t count, std::uint32_t shadow_count,
-                             std::uint32_t overlay_count) {
+                             std::uint32_t overlay_count,std::span<const SkinDraw> meshes) {
     const auto cmd = frame.commands;
     auto begin = vk<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -48,6 +48,15 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
     }
     const VkDeviceSize mesh_offset = view.dense_mesh ? 36*sizeof(gpu::Vertex) : 0;
     const std::uint32_t vertices = view.dense_mesh ? 576U : 36U;
+    const auto draw_skin = [&] {
+        if (meshes.empty()) return;
+        const std::array buffers{frame.skin.buffer,frame.skin_instances.buffer};
+        constexpr std::array<VkDeviceSize,2> offsets{};
+        vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(buffers.size()),buffers.data(),offsets.data());
+        for (std::uint32_t i=0; i<meshes.size(); ++i) {
+            vkCmdDraw(cmd,meshes[i].count,1,meshes[i].first,i);
+        }
+    };
     const VkViewport viewport{0,0,static_cast<float>(extent.width),static_cast<float>(extent.height),0,1};
     const VkRect2D rect{{0,0},extent};
 
@@ -79,6 +88,7 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(buffers.size()),buffers.data(),offsets.data());
         vkCmdPushConstants(cmd,shadow_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(light),&light);
         if (shadow_count) vkCmdDraw(cmd,vertices,shadow_count,0,0);
+        draw_skin();
         vkCmdEndRendering(cmd);
     });
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,1);
@@ -113,6 +123,7 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         vkCmdPushConstants(cmd,scene_layout,VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0,sizeof(constants),&constants);
         if (count) vkCmdDraw(cmd,vertices,count,0,0);
+        draw_skin();
         vkCmdEndRendering(cmd);
     });
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,2);
@@ -154,7 +165,8 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
     check(vkEndCommandBuffer(cmd),"Finish recording frame");
 }
 
-bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay) {
+bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes) {
+    if (meshes.size()>skin_mesh_limit) throw std::runtime_error("Frame skin mesh limit");
     if (items.size() > instance_limit) throw std::runtime_error("Frame instance limit exceeded");
     if (overlay.size() > overlay_limit) throw std::runtime_error("Frame overlay limit exceeded");
     if (dirty && !rebuild_swapchain()) return false;
@@ -230,7 +242,21 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     static_assert(sizeof(Lighting) == 80+32*light_limit);
     std::memcpy(frame.lighting.mapped,&lighting,sizeof(lighting));
     if (!overlay.empty()) std::memcpy(frame.overlay.mapped,overlay.data(),overlay.size_bytes());
-    record(frame,screen,view,camera,light,count,shadow_count,static_cast<std::uint32_t>(overlay.size()));
+    std::array<SkinDraw,skin_mesh_limit> skin_draws{};
+    std::uint32_t skin_vertices = 0;
+    for (std::size_t i=0; i<meshes.size(); ++i) {
+        const auto& mesh = meshes[i];
+        if (mesh.vertices.empty() || mesh.vertices.size()%3 ||
+            mesh.vertices.size()+skin_vertices>skin_vertex_limit) throw std::runtime_error("Frame skin vertex budget");
+        skin_draws[i] = {skin_vertices,static_cast<std::uint32_t>(mesh.vertices.size())};
+        std::memcpy(static_cast<std::byte*>(frame.skin.mapped)+skin_vertices*sizeof(MeshVertex),
+                    mesh.vertices.data(),mesh.vertices.size()*sizeof(MeshVertex));
+        const RenderItem skin_instance{mesh.model,mesh.color,0};
+        std::memcpy(static_cast<std::byte*>(frame.skin_instances.mapped)+i*sizeof(RenderItem),&skin_instance,sizeof(skin_instance));
+        skin_vertices += skin_draws[i].count;
+    }
+    record(frame,screen,view,camera,light,count,shadow_count,static_cast<std::uint32_t>(overlay.size()),
+           std::span(skin_draws).first(meshes.size()));
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
     acquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -266,9 +292,9 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         wait(frame.finished);
         save_capture();
     }
-    const auto triangles = count*(view.dense_mesh ? 192U : 12U);
+    const auto triangles = count*(view.dense_mesh ? 192U : 12U)+skin_vertices/3;
     const unsigned draws = 1 + static_cast<unsigned>(count>0) + static_cast<unsigned>(shadow_count>0) +
-                           static_cast<unsigned>(!overlay.empty());
+                           static_cast<unsigned>(!overlay.empty())+2*static_cast<unsigned>(meshes.size());
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
               properties.limits.timestampPeriod,timestamp_bits};

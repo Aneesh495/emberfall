@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emberfall/animation.hpp"
 #include "emberfall/collision.hpp"
 #include "emberfall/navigation.hpp"
 #include "emberfall/world.hpp"
@@ -70,6 +71,7 @@ public:
 
     void tick(const std::array<Command,2>& commands);
     std::vector<RenderItem> extract(float alpha, std::optional<Vec3> remote_first = {}) const;
+    std::vector<SkinBatch> skin(float alpha,std::optional<Vec3> remote_first = {}) const;
     const Player& player(std::size_t slot) const { return *world_.get<Player>(players_.at(slot)); }
     std::uint64_t ticks() const { return ticks_; }
     bool completed() const { return completed_; }
