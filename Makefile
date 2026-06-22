@@ -64,7 +64,7 @@ verify:
 	python3 scripts/verify_evidence.py "$(EVIDENCE)" . "$(BUILD)/ember-tool"
 controls:
 	test -n "$(EVIDENCE)"
-	python3 scripts/evidence_controls.py "$(EVIDENCE)" "$$(pwd)" "$$(pwd)/$(BUILD)/ember-tool" "$(EVIDENCE).controls.jsonl"
+	python3 scripts/evidence_controls.py "$(EVIDENCE)" "$$(pwd)" "$(abspath $(BUILD)/ember-tool)" "$(EVIDENCE).controls.jsonl"
 release: verify
 	@python3 -c 'import json, pathlib, sys; meta = json.loads((pathlib.Path(sys.argv[1])/"ACCEPTANCE.json").read_text()); sys.exit(0 if meta.get("profile") == "full" and meta.get("full_pass") is True else "A verified full campaign is required for release")' "$(EVIDENCE)"
 	$(MAKE) package-game

@@ -1,5 +1,6 @@
 #include "emberfall/world.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <optional>

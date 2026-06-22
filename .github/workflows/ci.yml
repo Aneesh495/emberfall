@@ -21,7 +21,7 @@ jobs:
       - name: Install build and software Vulkan diagnostic dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libvulkan-dev glslang-tools mesa-vulkan-drivers vulkan-validationlayers xvfb xauth libx11-dev libxext-dev libxfixes-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev
+          sudo apt-get install -y ninja-build libvulkan-dev glslang-tools mesa-vulkan-drivers vulkan-validationlayers xvfb xauth libx11-dev libxext-dev libxfixes-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev libxss-dev libxtst-dev libasound2-dev libudev-dev
       - name: Build and check documentation
         run: |
           make build
