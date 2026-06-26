@@ -44,11 +44,13 @@ struct Renderer::State {
         Buffer instances, overlay, lighting, skin, skin_instances;
         Image hdr, depth, shadow;
         VkDescriptorSet sample{}, light_set{};
+        bool attachments_written{}, shadow_written{};
     };
     struct Screen {
         VkImage image{};
         VkImageView view{};
         VkSemaphore ready{};
+        bool presented{};
     };
 
     ~State();

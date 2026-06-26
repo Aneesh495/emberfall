@@ -86,7 +86,8 @@ private:
             return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     VK_PIPELINE_STAGE_2_COPY_BIT,VK_ACCESS_2_TRANSFER_READ_BIT};
         case ImageUse::present:
-            return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,0,0};
+            return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,VK_ACCESS_2_MEMORY_READ_BIT};
         }
         throw std::logic_error("Unknown graph use");
     }

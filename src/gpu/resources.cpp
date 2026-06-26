@@ -174,6 +174,7 @@ void Renderer::State::clear_swapchain() {
         free(frame.depth);
         frame.sample = nullptr;
         frame.light_set = nullptr;
+        frame.attachments_written = false;
     }
     for (const auto& screen : screens) {
         vkDestroySemaphore(device,screen.ready,nullptr);

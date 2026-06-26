@@ -63,8 +63,21 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
     gpu::Resource hdr{frame.hdr.image,VK_IMAGE_ASPECT_COLOR_BIT};
     gpu::Resource depth{frame.depth.image,VK_IMAGE_ASPECT_DEPTH_BIT};
     gpu::Resource shadow{frame.shadow.image,VK_IMAGE_ASPECT_DEPTH_BIT};
-    gpu::Resource backbuffer{screen.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_UNDEFINED,
-                            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,0};
+    // Reusing a slot also needs a queue execution dependency across submissions.
+    if (frame.attachments_written) {
+        hdr = {frame.hdr.image,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+        depth = {frame.depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
+    }
+    if (frame.shadow_written) {
+        shadow = {frame.shadow.image,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+    }
+    gpu::Resource backbuffer{screen.image,VK_IMAGE_ASPECT_COLOR_BIT,
+        screen.presented ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,0};
     const gpu::RenderGraph graph(cmd);
     graph.pass({{shadow,gpu::ImageUse::depth_output}},[&] {
         const VkRect2D area{{0,0},{shadow_size,shadow_size}};
@@ -279,6 +292,8 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     submit.pSignalSemaphoreInfos = signal.data();
     check(vkQueueSubmit2(queue,1,&submit,nullptr),"Submit render graph");
     frame.finished = ++serial;
+    frame.attachments_written = frame.shadow_written = true;
+    screen.presented = true;
     auto present = vk<VkPresentInfoKHR>(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR);
     present.waitSemaphoreCount = 1;
     present.pWaitSemaphores = &screen.ready;
