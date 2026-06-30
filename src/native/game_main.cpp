@@ -15,7 +15,7 @@ struct Options {
     std::filesystem::path assets, shaders, profile, capture, replay, record;
     unsigned frames{}, level{};
     int width{1100}, height{700};
-    bool validation{}, audio{true}, hosting{}, replay_fast{};
+    bool validation{}, audio{true}, hosting{}, replay_fast{}, ui_check{};
     std::string address, key;
     std::uint16_t port{};
 };
@@ -57,6 +57,7 @@ Options parse(int argc,char** argv) {
         }
         else if (arg == "--validate") options.validation = true;
         else if (arg == "--no-audio") options.audio = false;
+        else if (arg == "--ui-check") options.ui_check = true;
         else if (arg == "--size") {
             const std::string_view dimensions = value();
             const auto split = dimensions.find('x');
@@ -66,6 +67,14 @@ Options parse(int argc,char** argv) {
             options.width = static_cast<int>(w);
             options.height = static_cast<int>(h);
         } else throw std::runtime_error("Unknown option: " + std::string(arg));
+    }
+    if (options.ui_check) {
+        if (options.profile.empty() || options.level || options.port || !options.replay.empty() ||
+            !options.record.empty() || std::filesystem::exists(options.profile/"settings.save") ||
+            std::filesystem::exists(options.profile/"campaign.save") || (options.frames && options.frames<44)) {
+            throw std::runtime_error("UI check requires a fresh explicit profile and at least 44 frames");
+        }
+        if (!options.frames) options.frames = 50;
     }
     if (options.level > Campaign::level_count || options.frames > 10000 || (!options.capture.empty() && !options.frames && options.replay.empty())) {
         throw std::runtime_error("Level or capture frame outside bounds");
@@ -112,6 +121,7 @@ private:
     void checkpoint();
     void persist();
     void paint(Canvas& canvas) const;
+    void check_ui(unsigned frame);
     void menu(Canvas& canvas, float y, std::span<const std::string_view> rows) const;
 
     const Options& options_;
@@ -138,7 +148,7 @@ private:
     std::unique_ptr<net::Session> network_;
     std::deque<net::InputFrame> history_;
     std::uint32_t epoch_{}, net_order_{}, net_jump_{}, net_use_{}, applied_input_{};
-    unsigned network_level_{};
+    unsigned network_level_{}, first_ui_width_{};
     std::uint64_t last_broadcast_{}, sample_time_{}, last_server_tick_{};
     Vec3 remote_before_{}, remote_after_{};
 };
@@ -239,7 +249,7 @@ void Application::handle(Input input) {
         persist();
     }
     if (screen_ == Screen::playing) {
-        if (input.pause || (input.lost_focus && !options_.frames)) {
+        if (input.pause || (input.lost_focus && (!options_.frames || options_.ui_check))) {
             screen_ = Screen::pause;
             cursor_ = 0;
             pending_ = {};
@@ -547,14 +557,70 @@ void Application::paint(Canvas& canvas) const {
     }
 }
 
+void Application::check_ui(unsigned frame) {
+    const auto key = [](SDL_Scancode code) {
+        SDL_Event input{};
+        input.type = SDL_EVENT_KEY_DOWN;
+        input.key.scancode = code;
+        if (!SDL_PushEvent(&input)) throw std::runtime_error("Could not enqueue native key event");
+    };
+    const auto focus = [](SDL_EventType type) {
+        SDL_Event input{};
+        input.type = type;
+        if (!SDL_PushEvent(&input)) throw std::runtime_error("Could not enqueue native focus event");
+    };
+    const auto require = [](bool condition,const char* detail) {
+        if (!condition) throw std::runtime_error(std::string("UI diagnostic: ")+detail);
+    };
+    switch (frame) {
+    case 1: focus(SDL_EVENT_WINDOW_FOCUS_GAINED); break;
+    case 3: case 4: key(SDL_SCANCODE_DOWN); break;
+    case 5: key(SDL_SCANCODE_RETURN); break;
+    case 6: require(screen_==Screen::settings,"settings screen not active"); break;
+    case 8: key(SDL_SCANCODE_LEFT); break;
+    case 9:
+        require(std::abs(settings_.volume-0.55f)<0.0001f &&
+                read_settings(options_.profile/"settings.save")==settings_,"volume did not persist");
+        break;
+    case 10: key(SDL_SCANCODE_ESCAPE); break;
+    case 12: key(SDL_SCANCODE_RETURN); break;
+    case 14: require(screen_==Screen::playing && selected_==0,"continue did not start the room"); break;
+    case 16: key(SDL_SCANCODE_TAB); break;
+    case 17: require(selected_==1,"companion switch did not apply"); break;
+    case 18: focus(SDL_EVENT_WINDOW_FOCUS_LOST); break;
+    case 19: require(screen_==Screen::pause,"focus loss did not pause"); break;
+    case 20: focus(SDL_EVENT_WINDOW_FOCUS_GAINED); break;
+    case 22: key(SDL_SCANCODE_RETURN); break;
+    case 23: require(screen_==Screen::playing,"resume failed"); break;
+    case 26: key(SDL_SCANCODE_ESCAPE); break;
+    case 28: key(SDL_SCANCODE_DOWN); break;
+    case 29: key(SDL_SCANCODE_RETURN); break;
+    case 30: require(screen_==Screen::playing && selected_==0,"restart did not reset selection"); break;
+    case 34:
+        first_ui_width_ = renderer_.report().width;
+        require(SDL_SetWindowSize(platform_.window(),540,380),"window resize failed");
+        renderer_.resize();
+        break;
+    case 41:
+        require(first_ui_width_!=0 && renderer_.report().width!=first_ui_width_,"drawable did not resize");
+        std::cout << "ui_check=settings,save,keyboard,focus,pause,restart,resize\n";
+        break;
+    default: break;
+    }
+}
+
 int Application::run() {
     auto previous = SDL_GetTicksNS();
-    unsigned drawn = 0;
+    unsigned drawn = 0, checked_frame = std::numeric_limits<unsigned>::max();
     const auto stop_at = previous+60'000'000'000ULL;
     while (!quit_) {
         const auto now = SDL_GetTicksNS();
         const auto elapsed = std::clamp(static_cast<double>(now-previous)*1e-9,0.0,0.1);
         previous = now;
+        if (options_.ui_check && checked_frame!=drawn) {
+            check_ui(drawn);
+            checked_frame = drawn;
+        }
         handle(platform_.input());
         if (quit_) break;
         simulate(elapsed);
@@ -607,7 +673,8 @@ int run_game(int argc,char** argv) {
                      "              [--size WIDTHxHEIGHT] [--no-audio] [--level 1..3]\n"
                      "              [--frames N [--capture FILE.ppm]]\n"
                      "              [--host PORT | --join IPV4 PORT] --key SHARED_KEY\n"
-                     "              [--record FILE | --replay FILE [--replay-fast]]\n";
+                     "              [--record FILE | --replay FILE [--replay-fast]]\n"
+                     "              [--ui-check --profile FRESH_DIRECTORY]\n";
         return 0;
     }
     const auto options = parse(argc,argv);

@@ -16,7 +16,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 
-add_library(emberfall_core src/math.cpp src/scene.cpp src/files.cpp src/collision.cpp src/game.cpp src/campaign.cpp src/editor.cpp src/net_protocol.cpp src/net_session.cpp src/scheduler.cpp src/replay.cpp src/dynamics.cpp src/scene_stream.cpp src/navigation.cpp src/animation.cpp src/scarf.cpp)
+add_library(emberfall_core
+    src/math.cpp src/scene.cpp src/files.cpp src/collision.cpp
+    src/game.cpp src/campaign.cpp src/editor.cpp src/net_protocol.cpp
+    src/net_session.cpp src/scheduler.cpp src/replay.cpp src/dynamics.cpp
+    src/scene_stream.cpp src/navigation.cpp src/animation.cpp src/scarf.cpp)
 target_include_directories(emberfall_core PUBLIC include)
 target_link_libraries(emberfall_core PUBLIC emberfall_options)
 if(BUILD_TESTING)

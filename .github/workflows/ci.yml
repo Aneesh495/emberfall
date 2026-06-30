@@ -32,7 +32,9 @@ jobs:
           make verify EVIDENCE=evidence/linux-ci
           make controls EVIDENCE=evidence/linux-ci
       - name: Exercise software Vulkan through resize
-        run: xvfb-run -a build/gpu_smoke build/shaders
+        run: |
+          xvfb-run -a build/gpu_smoke build/shaders
+          xvfb-run -a build/lantern-reach --validate --ui-check --no-audio --profile build/ui-check-profile
       - name: Verify standalone Linux diagnostic package
         run: |
           make package-game

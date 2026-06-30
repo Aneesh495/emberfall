@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 
 
 def check(value, message):
@@ -110,6 +111,42 @@ def verify_render(raw):
     }
 
 
+def verify_package(bundle):
+    archives = sorted((bundle / "package").glob("*.tar.gz"))
+    check(len(archives) == 1, "Package archive missing")
+    with tarfile.open(archives[0], "r:gz") as package:
+        files = [item for item in package if item.isfile()]
+        check(12 <= len(files) <= 32, "Package file count outside bounds")
+        prefix = "The-Lantern-Reach/"
+        for item in files:
+            check(item.name.startswith(prefix) and ".." not in Path(item.name).parts and
+                  0 < item.size <= 15_000_000, "Invalid archive member")
+        sums = package.extractfile(prefix + "SHA256SUMS")
+        check(sums is not None, "Package internal inventory absent")
+        expected = {name: checksum for checksum, name in (
+            line.split("  ", 1) for line in sums.read().decode().splitlines()
+        )}
+        check(set(expected) == {item.name.removeprefix(prefix) for item in files} - {"SHA256SUMS"},
+              "Package inventory mismatch")
+        for name, checksum in expected.items():
+            item = package.extractfile(prefix + name)
+            check(item is not None and hashlib.sha256(item.read()).hexdigest() == checksum, "Package checksum mismatch")
+        check(not any("editor" in name or name.endswith((".h", ".a")) for name in expected), "Editor leaked into package")
+    raw = bundle / "raw"
+    check("ui_check=settings,save,keyboard,focus,pause,restart,resize" in (raw / "ui_check.out").read_text() and
+          "validation_errors=0" in (raw / "ui_check.out").read_text(), "Native UI diagnostic incomplete")
+    check("editor_frames=25 validation_errors=0" in (raw / "editor.out").read_text(), "Editor render diagnostic incomplete")
+    for filename in ("frame.ppm", "ui.ppm", "editor.ppm", "ending.ppm"):
+        header, shape, rgb = (raw / filename).read_bytes().split(b"\n", 2)
+        width, height = map(int, shape.split())
+        check(header == b"P6" and 200 <= width <= 4096 and 200 <= height <= 4096 and
+              rgb.startswith(b"255\n") and len(rgb) == 4 + width * height * 3, "Incomplete framebuffer readback")
+    packaged = (raw / "package_smoke.out").read_text()
+    states = re.findall(r"replay_ticks=(\d+) final_hash=(\d+) completed=1", packaged)
+    check(len(states) == 3, "Packaged route completion missing")
+    return states
+
+
 def verify(bundle, source, tool):
     metadata = read(bundle / "ACCEPTANCE.json")
     profile = metadata["profile"]
@@ -135,13 +172,15 @@ def verify(bundle, source, tool):
     commands = [json.loads(line) for line in (bundle / "COMMANDS.jsonl").read_text().splitlines()]
     names = ["doctor", "build", "cook", "ctest", "world", "scheduler", "solo", "network", "ecs", "physics"]
     if profile == "portability-diagnostic":
-        names += ["gpu_smoke", "render"]
+        names += ["gpu_smoke", "render", "ui_check", "editor", "package", "package_smoke"]
     check([row["name"] for row in commands] == names and all(
         row["exit"] == 0 and 0 <= row["wall_seconds"] < row["timeout_seconds"] for row in commands
     ), "Required command failed or missing")
     summary = verify_cpu(bundle)
+    packaged = None
     if profile == "portability-diagnostic":
         summary.update(verify_render(bundle / "raw"))
+        packaged = verify_package(bundle)
 
     expected = ("01-aperture.scene", "02-prism.scene", "03-meridian.scene")
     levels = bundle / "levels"
@@ -157,6 +196,9 @@ def verify(bundle, source, tool):
         check(observed and 200 <= int(observed[1]) <= 600, "Incomplete replay tick range")
         check(f"hash {observed[2]}" in (bundle / "raw" / "solo.out").read_text(), "Replay final state mismatch")
         replays[name] = {"ticks": int(observed[1]), "hash": observed[2]}
+    if packaged is not None:
+        check(packaged == [(str(row["ticks"]), row["hash"]) for row in replays.values()],
+              "Packaged replay states mismatch")
     return {"profile": profile, "summary": summary, "replays": replays}
 
 

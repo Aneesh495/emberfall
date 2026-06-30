@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <concepts>
 #include <cstdint>
 #include <functional>
@@ -97,6 +98,7 @@ public:
 
     template<class... C>
     Entity spawn(C... values) {
+        static_assert(std::popcount(mask<C...>) == sizeof...(C), "Duplicate component in entity spawn");
         require_barrier();
         auto& target = table(mask<C...>);
         target.prepare();
