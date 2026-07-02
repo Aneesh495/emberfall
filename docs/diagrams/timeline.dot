@@ -1,0 +1,16 @@
+digraph Emberfall {
+  graph [rankdir=TB, bgcolor="#ffffff", pad=0.22, labelloc=t, fontname="Helvetica", fontsize=20, label="GPU lifetime ownership"];
+  node [shape=box, style="rounded,filled", fillcolor="#e7f4f3", color="#317775", fontname="Helvetica", fontsize=12, margin="0.18,0.11"];
+  edge [color="#5f737e", fontname="Helvetica", fontsize=10];
+
+ upload [label="CPU writes mapped slot"]
+ waits [label="Acquire image"]
+ submit [label="Submit and signal timeline"]
+ ready [label="Present image-specific semaphore"]
+ completion [label="Wait for old slot value"]
+ reuse [label="Reuse offscreen images and upload"]
+ upload -> submit
+ waits -> submit
+ submit -> ready
+ submit -> completion -> reuse
+ }

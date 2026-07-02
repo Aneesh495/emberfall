@@ -1,0 +1,14 @@
+digraph Emberfall {
+  graph [rankdir=TB, bgcolor="#ffffff", pad=0.22, labelloc=t, fontname="Helvetica", fontsize=20, label="Input and snapshot exchange"];
+  node [shape=box, style="rounded,filled", fillcolor="#e7f4f3", color="#317775", fontname="Helvetica", fontsize=12, margin="0.18,0.11"];
+  edge [color="#5f737e", fontname="Helvetica", fontsize=10];
+
+ client [label="Client input order and edge counters"]
+ host [label="Host validates and simulates"]
+ fragments [label="Quantized snapshot fragments"]
+ decode [label="Bounded newest-frame reassembly"]
+ correction [label="Install state and replay pending input"]
+ client -> host [label="UDP input"]
+ host -> fragments -> decode -> correction
+ correction -> client [label="local prediction"]
+ }

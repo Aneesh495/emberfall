@@ -1,0 +1,15 @@
+digraph Emberfall {
+  graph [rankdir=TB, bgcolor="#ffffff", pad=0.22, labelloc=t, fontname="Helvetica", fontsize=20, label="Crash and replay recovery"];
+  node [shape=box, style="rounded,filled", fillcolor="#e7f4f3", color="#317775", fontname="Helvetica", fontsize=12, margin="0.18,0.11"];
+  edge [color="#5f737e", fontname="Helvetica", fontsize=10];
+
+ dirty [label="Dirty edit or checkpoint"]
+ temporary [label="Write and flush temporary"]
+ rename [label="Rename and flush directory"]
+ reopen [label="Validate version and scene revision"]
+ restore [label="Restore canonical state"]
+ replay [label="Replay accepted tick commands"]
+ hash [label="Compare per-tick hashes"]
+ dirty -> temporary -> rename -> reopen -> restore
+ reopen -> replay -> hash
+ }

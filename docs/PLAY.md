@@ -8,12 +8,13 @@ Unpack the archive and run `./play` from the extracted directory. The game store
 | Jump | Space | A / south |
 | Use lantern or push crate | E | B / east |
 | Switch explorers in solo | Tab | Y / north |
+| Toggle companion follow in solo | F | Left shoulder |
 | Crouch | Left Ctrl | Right shoulder |
 | Pause | Escape | Start |
 | Navigate menus | Arrows, Enter | D-pad, A / south |
 | Fullscreen | F11 | Settings menu |
 
-The idle explorer stays where you leave them. The Aperture needs an explorer on each of the two plates. One explorer holds the Prism interlock while the other rotates the lantern. In the Meridian, board the ferry before powering it from shore. Beacons save both explorers at a safe position on the current level.
+The idle explorer stays where you leave them until you toggle Follow. The Aperture needs an explorer on each of the two plates. One explorer holds the Prism interlock while the other rotates the lantern. In the Meridian, board the ferry before powering it from shore. Beacons save both explorers at a safe position on the current level.
 
 ## Local network play
 
