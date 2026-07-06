@@ -16,7 +16,7 @@ def main():
         env.pop(name, None)
     with tempfile.TemporaryDirectory(prefix="lantern-package-check-") as folder:
         subprocess.run(["tar", "-xzf", archive, "-C", folder], check=True, timeout=25)
-        installed = Path(folder) / "The-Lantern-Reach"
+        installed = (Path(folder) / "The-Lantern-Reach").resolve()
         inventory = {}
         for line in (installed / "SHA256SUMS").read_text().splitlines():
             digest, relative = line.split("  ", 1)
