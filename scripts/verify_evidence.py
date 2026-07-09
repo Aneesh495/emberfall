@@ -115,7 +115,10 @@ def verify_package(bundle):
     archives = sorted((bundle / "package").glob("*.tar.gz"))
     check(len(archives) == 1, "Package archive missing")
     with tarfile.open(archives[0], "r:gz") as package:
-        files = [item for item in package if item.isfile()]
+        members = list(package)
+        check(all(item.isfile() or item.isdir() for item in members), "Unexpected archive member type")
+        check(len({item.name for item in members}) == len(members), "Duplicate archive member")
+        files = [item for item in members if item.isfile()]
         check(12 <= len(files) <= 32, "Package file count outside bounds")
         prefix = "The-Lantern-Reach/"
         for item in files:

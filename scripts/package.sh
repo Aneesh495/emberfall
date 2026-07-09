@@ -75,6 +75,6 @@ for name, record in manifest["outputs"].items():
     for path in sorted(root.rglob("*")) if path.is_file()))
 PY
 archive="$output/the-lantern-reach-$platform.tar.gz"
-tar -C "$tmp" -czf "$tmp/archive.tar.gz" The-Lantern-Reach
+COPYFILE_DISABLE=1 tar -C "$tmp" -czf "$tmp/archive.tar.gz" The-Lantern-Reach
 mv "$tmp/archive.tar.gz" "$archive"
 printf '%s\n' "$archive"
