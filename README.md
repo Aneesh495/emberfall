@@ -28,6 +28,7 @@ The runtime advances a generation-checked archetype world at 60 Hz. The Vulkan r
 - [Editable diagrams and SVGs](docs/DIAGRAMS.md)
 - [Experiment plan](docs/EXPERIMENT_PLAN.md) and [reproduction commands](docs/REPRODUCIBILITY.md)
 - [Methods and provenance](docs/BIBLIOGRAPHY.md)
+- [Measured portability diagnostic](docs/DIAGNOSTICS.md)
 - [Current build and gate status](docs/BUILD_STATUS.md)
 
 The preview supports complete scripted runs of all three levels. The Linux hardware acceptance campaign and full engine feature set remain incomplete.
