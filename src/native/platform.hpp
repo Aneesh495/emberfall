@@ -39,7 +39,7 @@ public:
     explicit Canvas(float logical_width) : width_(logical_width) {}
     void box(float x,float y,float w,float h,Color c);
     void text(float x,float y,float size,std::string_view content,Color c);
-    void wrapped(float x,float y,float size,std::string_view content,Color c);
+    void wrapped(float x,float y,float size,std::string_view content,Color c,float max_width = 0);
     std::span<const OverlayVertex> vertices() const { return vertices_; }
     float width() const { return width_; }
 private:

@@ -295,7 +295,10 @@ std::vector<RenderItem> Game::extract(float alpha, std::optional<Vec3> remote_fi
             emission = lit ? 2.4f : 0.25f;
             if (lit) color = lerp(color,{0.20f,0.92f,0.74f},0.7f);
         }
-        append_box(output,position,n.size,color,pose.yaw,emission);
+        auto visual_size = n.size;
+        // Keep the ferry deck surface separate from the dock when the two supports overlap.
+        if (n.kind == Kind::platform) visual_size.y *= 0.94f;
+        append_box(output,position,visual_size,color,pose.yaw,emission);
         if (n.kind == Kind::mirror) {
             const float distance = powered(n.link) ? planar_distance(position,location(n.link)) : 1.2f;
             const Vec3 direction{std::sin(pose.yaw),0,-std::cos(pose.yaw)};

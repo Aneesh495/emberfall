@@ -65,8 +65,8 @@ void Canvas::text(float x,float y,float size,std::string_view content,Color c) {
     }
 }
 
-void Canvas::wrapped(float x,float y,float size,std::string_view content,Color c) {
-    const float right = width_-x;
+void Canvas::wrapped(float x,float y,float size,std::string_view content,Color c,float max_width) {
+    const float right = max_width > 0 ? std::min(x+max_width,width_-x) : width_-x;
     float cursor = x;
     while (!content.empty()) {
         const auto at = content.find(' ');

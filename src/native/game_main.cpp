@@ -527,12 +527,12 @@ void Application::paint(Canvas& canvas) const {
     if (screen_ == Screen::title) {
         const auto title_size = std::min(4.0f,(panel_width-36)/102);
         canvas.text(32,106,title_size,"THE LANTERN REACH",white);
-        canvas.wrapped(32,156,1.6f,"Two explorers. One dark observatory.",muted);
+        canvas.wrapped(32,156,1.6f,"Two explorers. One dark observatory.",muted,panel_width-36);
         constexpr std::array<std::string_view,4> rows{"Continue","New expedition","Settings","Quit"};
         menu(canvas,215,rows);
-        canvas.wrapped(32,418,1.5f,"Walk and jump between platforms. Switch explorers to leave one on a relay.",white);
+        canvas.wrapped(32,418,1.5f,"Walk and jump between platforms. Switch explorers to leave one on a relay.",white,panel_width-36);
         canvas.wrapped(32,471,1.35f,"ARROWS OR D-PAD    ENTER OR A",muted);
-        if (note_time_ > 0) canvas.wrapped(32,500,1.35f,note_.substr(0,120),amber);
+        if (note_time_ > 0) canvas.wrapped(32,500,1.35f,note_.substr(0,120),amber,panel_width-36);
     } else if (screen_ == Screen::pause) {
         canvas.text(32,106,4,"EXPEDITION PAUSED",white);
         constexpr std::array<std::string_view,4> rows{"Resume","Restart checkpoint","Settings","Return to title"};
@@ -552,7 +552,7 @@ void Application::paint(Canvas& canvas) const {
         const bool finished = screen_ == Screen::finished;
         canvas.text(32,106,3.0f,finished ? "OBSERVATORY RELIT" : "ROUTE OPENED",white);
         canvas.wrapped(32,175,1.7f,finished ? "The beacon is lit. The night crew can find its way home." :
-            campaign_.scene(progress_.level).title,cyan);
+            campaign_.scene(progress_.level).title,cyan,panel_width-36);
         canvas.wrapped(32,245,1.5f,finished ? "ENTER TO RETURN TO TITLE" : network_ && !options_.hosting ? "WAITING FOR HOST" : "ENTER TO CONTINUE",white);
     }
 }
