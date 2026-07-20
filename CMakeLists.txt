@@ -115,3 +115,7 @@ if(BUILD_TESTING)
     target_link_libraries(animation_tests PRIVATE emberfall_core)
     add_test(NAME animation COMMAND animation_tests)
 endif()
+if(BUILD_TESTING)
+    add_test(NAME gltf_import COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/gltf_import.py"
+        "${PROJECT_SOURCE_DIR}/scripts/gltf_import.py")
+endif()

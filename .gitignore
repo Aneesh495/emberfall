@@ -8,3 +8,5 @@
 *.tmp
 
 *.scene.recover
+
+__pycache__/
