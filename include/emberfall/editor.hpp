@@ -23,7 +23,7 @@ public:
     bool redo();
     void mark_saved();
     SceneId allocate_id() const;
-    std::unique_ptr<Game> play() const;
+    std::unique_ptr<Game> play(std::shared_ptr<const MeshLibrary> assets = {}) const;
 private:
     Scene make_candidate(const std::vector<Edit>& edits, bool backwards) const;
     Scene scene_, saved_;

@@ -12,7 +12,7 @@ Emberfall runs as a native game and scene workshop. The current acceptance scope
 | G06 Rendering performance | Blocked | The M2 diagnostic uses the target geometry count and resolution with a narrower pass set. The Linux reference GPU and full graph are outstanding. |
 | G07 ECS performance | Unverified | Separate one- and four-worker 100,000-entity diagnostic available. The reference CPU is not pinned. |
 | G08 Physics | Unverified | Analytical linear contacts, momentum exchange, stack, tunneling, character steps and moving platforms are exercised. Convex hulls, angular dynamics and the complete reference workload remain. |
-| G09 Content | Unverified | Catalog manifests, prefab rebuilds and scene cache reload are exercised. glTF imports and GPU resource streaming remain. |
+| G09 Content | Unverified | Catalog manifests, prefab rebuilds and scene cache reload are exercised. Static glTF and GLB meshes cook and render in both native programs. Texture and animation imports and GPU resource streaming remain. |
 | G10 Editor | Unverified | 1,000 edit operations, recovery reopen and separate play state are checked. The full prefab override and editor integration matrix remains. |
 | G11 Animation and navigation | Unverified | Weighted skin fixture, skinned cloth and collision-aware companion A* are available. Full animation asset imports and companion integration fixtures remain. |
 | G12 Networking | Unverified | All levels finish across two loopback endpoints under simulated impairment, including reconnect and duplicate event checks. Packaged two-machine play remains. |

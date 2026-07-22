@@ -22,7 +22,7 @@ struct Settings {
 class Campaign {
 public:
     static constexpr std::size_t level_count = 3;
-    explicit Campaign(const std::filesystem::path& directory);
+    explicit Campaign(const std::filesystem::path& directory, bool load_visuals = false);
 
     const Scene& scene(std::size_t index) const { return *scenes_.at(index); }
     std::unique_ptr<Game> load(Progress progress) const;
@@ -33,6 +33,7 @@ private:
     void validate(Progress progress) const;
     std::array<std::shared_ptr<const Scene>,level_count> scenes_;
     std::uint64_t revision_{};
+    std::shared_ptr<const MeshLibrary> assets_;
 };
 
 std::uint64_t fingerprint(std::string_view bytes);

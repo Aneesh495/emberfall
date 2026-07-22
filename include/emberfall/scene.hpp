@@ -26,6 +26,7 @@ struct Node {
     SceneId link{};
     Vec3 destination{};
     float parameter{};
+    std::string mesh{};
     friend bool operator==(const Node&, const Node&) = default;
 };
 
@@ -35,6 +36,7 @@ struct Scene {
     friend bool operator==(const Scene&, const Scene&) = default;
 };
 
+bool valid_mesh_name(std::string_view name);
 std::string_view kind_name(Kind kind);
 void validate_scene(const Scene& scene);
 Scene parse_scene(std::string_view bytes);

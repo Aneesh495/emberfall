@@ -31,6 +31,7 @@ struct FrameReport {
     std::array<std::uint64_t,4> timestamps{};
     double timestamp_period_ns{};
     unsigned timestamp_valid_bits{};
+    std::uint32_t imported_triangles{};
 };
 
 class Renderer {
@@ -41,7 +42,7 @@ public:
     Renderer& operator=(const Renderer&) = delete;
     void resize();
     bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay = {},
-              std::span<const SkinBatch> meshes = {});
+              std::span<const SkinBatch> meshes = {}, std::span<const MeshInstance> imported = {});
     void capture_next(std::filesystem::path file);
     const FrameReport& report() const;
     std::string adapter() const;

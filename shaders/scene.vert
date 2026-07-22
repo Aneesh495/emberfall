@@ -3,10 +3,14 @@ layout(location=0) in vec3 inPosition;
 layout(location=1) in vec3 inNormal;
 layout(location=2) in mat4 instanceModel;
 layout(location=6) in vec4 instanceTint;
+layout(location=7) in vec4 instanceSurface;
+layout(location=8) in float instanceMetallic;
 
 layout(location=0) out vec3 normal;
 layout(location=1) out vec3 worldPosition;
 layout(location=2) out vec4 tint;
+layout(location=3) flat out vec4 surfaceData;
+layout(location=4) flat out float metallic;
 
 layout(push_constant) uniform SceneCamera {
     mat4 viewProjection;
@@ -18,5 +22,7 @@ void main() {
     worldPosition = world.xyz;
     normal = transpose(inverse(mat3(instanceModel))) * inNormal;
     tint = instanceTint;
+    surfaceData = instanceSurface;
+    metallic = instanceMetallic;
     gl_Position = camera.viewProjection * world;
 }

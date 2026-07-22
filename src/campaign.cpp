@@ -51,7 +51,7 @@ std::uint64_t fingerprint(std::string_view bytes) {
     return hash;
 }
 
-Campaign::Campaign(const std::filesystem::path& directory) {
+Campaign::Campaign(const std::filesystem::path& directory, bool load_visuals) {
     std::string source;
     SceneStream stream(directory,8*1024*1024);
     std::array<SceneHandle,level_count> handles{};
@@ -62,6 +62,11 @@ Campaign::Campaign(const std::filesystem::path& directory) {
         source += write_scene(*scenes_[i]);
     }
     revision_ = fingerprint(source);
+    if (load_visuals) {
+        auto library = std::make_shared<MeshLibrary>(directory);
+        for (const auto& scene : scenes_) library->load(*scene);
+        assets_ = std::move(library);
+    }
 }
 
 void Campaign::validate(Progress progress) const {
@@ -79,7 +84,7 @@ void Campaign::validate(Progress progress) const {
 
 std::unique_ptr<Game> Campaign::load(Progress progress) const {
     validate(progress);
-    auto game = std::make_unique<Game>(scene(progress.level));
+    auto game = std::make_unique<Game>(scene(progress.level),false,assets_);
     game->restore_checkpoint(progress.checkpoint);
     return game;
 }

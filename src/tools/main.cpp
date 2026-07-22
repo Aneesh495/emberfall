@@ -29,6 +29,14 @@ int main(int argc,char** argv) {
             ember::write_atomic(argv[3],ember::write_scene(document.scene()));
             return 0;
         }
+        if (argc == 3 && std::string_view(argv[1]) == "mesh-references") {
+            const auto scene = ember::load_scene(argv[2]);
+            for (const auto& [id,node] : scene.nodes) {
+                (void)id;
+                if (!node.mesh.empty()) std::cout << node.mesh << '\n';
+            }
+            return 0;
+        }
         if (argc == 4 && std::string_view(argv[1]) == "replay-check") {
             const ember::Campaign campaign(argv[2]);
             const auto tape = ember::read_replay(argv[3]);

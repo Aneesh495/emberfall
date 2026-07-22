@@ -188,7 +188,17 @@ def verify(bundle, source, tool):
     expected = ("01-aperture.scene", "02-prism.scene", "03-meridian.scene")
     levels = bundle / "levels"
     catalog = read(levels / "manifest.json")["outputs"]
-    check(set(catalog) == set(expected), "Packaged level coverage mismatch")
+    scene_names = {name for name in catalog if name.endswith(".scene")}
+    check(scene_names == set(expected), "Packaged level coverage mismatch")
+    files = {path.name for path in levels.iterdir() if path.suffix in (".scene", ".mesh")}
+    check(files == set(catalog), "Cooked asset inventory mismatch")
+    for name, record in catalog.items():
+        check(name == Path(name).name and name.endswith((".scene", ".mesh")), "Invalid cooked asset name")
+        check(digest(levels / name) == record["sha256"], "Cooked asset mismatch")
+        if name.endswith(".mesh"):
+            check((levels / name).read_bytes().startswith(b"EMBMSH01"), "Invalid baked mesh header")
+        for dependency in record.get("mesh_dependencies", []):
+            check(dependency in catalog and dependency.endswith(".mesh"), "Unknown cooked mesh dependency")
     replays = {}
     for name in expected:
         check(digest(levels / name) == catalog[name]["sha256"], "Cooked level mismatch")

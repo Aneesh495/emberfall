@@ -84,14 +84,16 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     const std::array<VkVertexInputBindingDescription,2> bindings{{
         {0,sizeof(Vertex),VK_VERTEX_INPUT_RATE_VERTEX}, {1,sizeof(RenderItem),VK_VERTEX_INPUT_RATE_INSTANCE}
     }};
-    const std::array<VkVertexInputAttributeDescription,7> attributes{{
+    const std::array<VkVertexInputAttributeDescription,9> attributes{{
         {0,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,position)},
         {1,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,normal)},
         {2,1,VK_FORMAT_R32G32B32A32_SFLOAT,0},
         {3,1,VK_FORMAT_R32G32B32A32_SFLOAT,16},
         {4,1,VK_FORMAT_R32G32B32A32_SFLOAT,32},
         {5,1,VK_FORMAT_R32G32B32A32_SFLOAT,48},
-        {6,1,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderItem,color)}
+        {6,1,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderItem,color)},
+        {7,1,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderItem,surface)},
+        {8,1,VK_FORMAT_R32_SFLOAT,offsetof(RenderItem,metallic)}
     }};
     const std::array shadow_attributes{attributes[0],attributes[2],attributes[3],attributes[4],attributes[5]};
     static_assert(offsetof(RenderItem,emission) == offsetof(RenderItem,color)+12);

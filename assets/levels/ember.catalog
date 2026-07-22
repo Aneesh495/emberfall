@@ -9,3 +9,5 @@ place 02-prism.scene relay-stanchion.prefab 100 -5.4 0 -5.3
 place 02-prism.scene relay-stanchion.prefab 103 5.4 0 -5.3
 place 03-meridian.scene relay-stanchion.prefab 100 -4.35 0 -8.1
 place 03-meridian.scene relay-stanchion.prefab 103 4.35 0 -8.1
+
+mesh prism-monitor.gltf aa4d4f1f6e7d4d0a9724f1863e882ca1

@@ -1,8 +1,10 @@
+import base64
 import hashlib
 import json
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 
@@ -23,9 +25,9 @@ def cook(source, target, succeeds=True):
 with tempfile.TemporaryDirectory(prefix="ember-cook-test-") as root:
     source, first, second = (Path(root) / item for item in ("source", "first", "second"))
     shutil.copytree(original, source)
-    assert len(cook(source, first)) == 3
+    assert len(cook(source, first)) == 4
     assert cook(source, first) == []
-    assert len(cook(source, second)) == 3
+    assert len(cook(source, second)) == 4
     assert (first / "manifest.json").read_bytes() == (second / "manifest.json").read_bytes()
 
     scene = source / "01-aperture.scene"
@@ -35,6 +37,26 @@ with tempfile.TemporaryDirectory(prefix="ember-cook-test-") as root:
     prefab = source / "relay-stanchion.prefab"
     prefab.write_text(prefab.read_text().replace("Copper collar", "Copper trim"))
     assert len(cook(source, first)) == 3
+    gltf = source / "prism-monitor.gltf"
+    model = json.loads(gltf.read_text())
+    data = base64.b64decode(model["buffers"][0]["uri"].split(",",1)[1])
+    model["buffers"][0]["uri"] = "prism.bin"
+    gltf.write_text(json.dumps(model))
+    external = source / "prism.bin"
+    external.write_bytes(data)
+    catalog = source / "ember.catalog"
+    with catalog.open("a") as target:
+        target.write("buffer prism.bin 41b26dff88ae42ce9624e8a8fba89c35\n"
+                     "mesh-buffer prism-monitor.gltf prism.bin\n")
+    assert cook(source, first) == ["prism-monitor.mesh"]
+    external.write_bytes(struct.pack("<f", 0.45) + data[4:])
+    assert cook(source, first) == ["prism-monitor.mesh"]
+    before = (first / "manifest.json").read_bytes()
+    external.write_bytes(data[:-4])
+    cook(source, first, succeeds=False)
+    assert (first / "manifest.json").read_bytes() == before
+    external.write_bytes(data)
+    assert cook(source, first) == ["prism-monitor.mesh"]
     before = (first / "manifest.json").read_bytes()
     manifest = json.loads(before)
     for name, output in manifest["outputs"].items():

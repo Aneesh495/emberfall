@@ -11,12 +11,12 @@ namespace {
 
 enum class Field : unsigned {
     name, kind, position_x, position_y, position_z, size_x, size_y, size_z,
-    yaw, red, green, blue, link, parent, destination_x, destination_y, destination_z, parameter
+    yaw, red, green, blue, link, parent, destination_x, destination_y, destination_z, parameter, mesh
 };
 
-constexpr std::array<std::string_view,18> field_names{
+constexpr std::array<std::string_view,19> field_names{
     "Name","Kind","Position X","Position Y","Position Z","Size X","Size Y","Size Z","Yaw radians",
-    "Tint R","Tint G","Tint B","Link ID","Parent ID","Target X","Target Y","Target Z","Parameter"
+    "Tint R","Tint G","Tint B","Link ID","Parent ID","Target X","Target Y","Target Z","Parameter","Mesh"
 };
 constexpr Color slate{0.022f,0.038f,0.066f,0.97f};
 constexpr Color cyan{0.16f,0.79f,0.72f};
@@ -58,6 +58,7 @@ std::string value(Node n, Field field) {
     switch (field) {
     case Field::name: return n.name;
     case Field::kind: return std::string(kind_name(n.kind));
+    case Field::mesh: return n.mesh.empty() ? "-" : n.mesh;
     case Field::link: return std::to_string(n.link);
     case Field::parent: return std::to_string(n.parent);
     default:
@@ -70,6 +71,7 @@ std::string value(Node n, Field field) {
 void assign(Node& node,Field field,const std::string& text) {
     switch (field) {
     case Field::name: node.name = text; break;
+    case Field::mesh: node.mesh = text == "-" ? "" : text; break;
     case Field::kind: {
         const auto space = text.find(' ');
         const auto name = std::string_view(text).substr(0,space);
@@ -88,7 +90,7 @@ void assign(Node& node,Field field,const std::string& text) {
 }
 
 struct Options {
-    std::filesystem::path file, shaders, capture;
+    std::filesystem::path file, shaders, capture, mesh_directory;
     unsigned frames{};
     bool validation{};
 };
@@ -112,9 +114,10 @@ private:
     void field_input();
     void select(SceneId id,bool keep);
     void refresh_assets();
+    void refresh_meshes();
     void add_prefab();
     void make_prefab();
-    std::vector<RenderItem> extract() const;
+    std::vector<RenderItem> extract(std::vector<MeshInstance>& imported) const;
     void paint(Canvas& canvas) const;
     std::vector<SceneId> visible_nodes() const;
     View view() const;
@@ -124,6 +127,7 @@ private:
     Renderer renderer_;
     EditorFile file_;
     std::unique_ptr<Game> play_;
+    std::shared_ptr<const MeshLibrary> mesh_library_;
     Vec3 center_{0,0,0};
     float zoom_{1};
     std::vector<SceneId> selected_;
@@ -142,6 +146,7 @@ Editor::Editor(Options options)
       renderer_(platform_.window(),options_.shaders,options_.validation), file_(options_.file) {
     refresh_assets();
     if (file_.recovered()) status_ = "Recovered unsaved changes";
+    refresh_meshes();
 }
 
 View Editor::view() const {
@@ -163,10 +168,31 @@ void Editor::refresh_assets() {
     selected_asset_ = 0;
 }
 
+void Editor::refresh_meshes() {
+    auto library = std::make_shared<MeshLibrary>(options_.mesh_directory);
+    try {
+        const auto& scene = file_.document().scene();
+        library->load(scene,true);
+        for (const auto& [id,node] : scene.nodes) {
+            (void)id;
+            if (!node.mesh.empty() && !library->find(node.mesh)) {
+                status_ = "Cook mesh asset " + node.mesh + " to preview it";
+                break;
+            }
+        }
+        mesh_library_ = std::move(library);
+    } catch (const std::exception& error) {
+        status_ = error.what();
+    }
+}
+
 void Editor::edit(const std::vector<Edit>& transaction) {
     file_.document().apply(transaction);
     file_.write_recovery();
     status_ = "Transaction applied";
+    if (std::ranges::any_of(transaction, [](const Edit& change) {
+            return (change.before && !change.before->mesh.empty()) || (change.after && !change.after->mesh.empty());
+        })) refresh_meshes();
 }
 
 void Editor::select(SceneId id,bool keep) {
@@ -245,7 +271,7 @@ void Editor::key(const SDL_KeyboardEvent& e) {
     }
     if (e.scancode == SDL_SCANCODE_F5) {
         if (play_) play_.reset();
-        else play_ = file_.document().play();
+        else play_ = file_.document().play(mesh_library_);
         paused_ = false;
         status_ = play_ ? "Play world running" : "Returned to edit world";
         return;
@@ -264,10 +290,12 @@ void Editor::key(const SDL_KeyboardEvent& e) {
             std::erase_if(selected_,[&](SceneId id) { return !doc.scene().nodes.contains(id); });
             file_.write_recovery();
             status_ = shift ? "Redone" : "Undone";
+            refresh_meshes();
         }
     } else if (command && e.scancode == SDL_SCANCODE_P) make_prefab();
     else if (e.scancode == SDL_SCANCODE_I) add_prefab();
     else if (e.scancode == SDL_SCANCODE_V && !assets_.empty()) selected_asset_ = (selected_asset_+1)%assets_.size();
+    else if (e.scancode == SDL_SCANCODE_F8) refresh_meshes();
     else if (e.scancode == SDL_SCANCODE_G) snapping_ = !snapping_;
     else if (e.scancode == SDL_SCANCODE_RETURN) field_input();
     else if (e.scancode == SDL_SCANCODE_INSERT || e.scancode == SDL_SCANCODE_N) {
@@ -281,14 +309,14 @@ void Editor::key(const SDL_KeyboardEvent& e) {
         edit(removed);
         selected_.clear();
     } else if (e.scancode == SDL_SCANCODE_UP) {
-        field_ = static_cast<Field>((static_cast<unsigned>(field_)+17)%18);
+        field_ = static_cast<Field>((static_cast<unsigned>(field_)+field_names.size()-1)%field_names.size());
     } else if (e.scancode == SDL_SCANCODE_DOWN) {
-        field_ = static_cast<Field>((static_cast<unsigned>(field_)+1)%18);
+        field_ = static_cast<Field>((static_cast<unsigned>(field_)+1)%field_names.size());
     } else if (e.scancode == SDL_SCANCODE_LEFT || e.scancode == SDL_SCANCODE_RIGHT) {
         if (selected_.empty()) return;
         const auto& n = doc.scene().nodes.at(selected_.back());
         auto modified = n;
-        if (field_ == Field::name || field_ == Field::kind || field_ == Field::link || field_ == Field::parent) return;
+        if (field_ == Field::name || field_ == Field::kind || field_ == Field::link || field_ == Field::parent || field_ == Field::mesh) return;
         real_field(modified,field_) += (e.scancode == SDL_SCANCODE_LEFT ? -1.0f : 1.0f)*(snapping_ ? 0.25f : 0.05f);
         edit({{n,std::move(modified)}});
     } else if (e.scancode == SDL_SCANCODE_ESCAPE) {
@@ -312,7 +340,7 @@ void Editor::click(const SDL_MouseButtonEvent& event) {
         return;
     }
     if (x > logical_width_-220) {
-        if (y >= 74 && y < 488) {
+        if (y >= 74 && y < 74+23*field_names.size()) {
             field_ = static_cast<Field>(static_cast<unsigned>((y-74)/23));
             if (event.clicks >= 2) field_input();
         }
@@ -362,10 +390,9 @@ void Editor::event(const SDL_Event& e) {
     }
 }
 
-std::vector<RenderItem> Editor::extract() const {
+std::vector<RenderItem> Editor::extract(std::vector<MeshInstance>& imported) const {
     const auto& scene = file_.document().scene();
     if (play_) return play_->extract(1);
-    if (selected_.empty()) return extract_edit_scene(scene);
     Scene preview = scene;
     if (drag_) {
         Vec3 delta;
@@ -379,8 +406,13 @@ std::vector<RenderItem> Editor::extract() const {
     out.reserve(scene.nodes.size()+3);
     for (const auto& [id,node] : preview.nodes) {
         const bool active = std::ranges::find(selected_,id) != selected_.end();
-        out.push_back({matrices.at(id),node.color,active ? 0.8f : node.kind == Kind::decor ? node.parameter : 0});
+        if (const auto* asset = mesh_library_ ? mesh_library_->find(node.mesh) : nullptr) {
+            imported.push_back({asset,matrices.at(id),node.color*(active ? 1.45f : 1.0f)});
+        } else {
+            out.push_back({matrices.at(id),node.color,active ? 0.8f : node.kind == Kind::decor ? node.parameter : 0});
+        }
     }
+    if (selected_.empty()) return out;
     const auto origin = transform_point(matrices.at(selected_.back()),{});
     constexpr std::array axes{Vec3{1,0,0},Vec3{0,1,0},Vec3{0,0,1}};
     constexpr std::array colors{Vec3{0.95f,0.12f,0.09f},Vec3{0.15f,0.88f,0.28f},Vec3{0.14f,0.33f,0.95f}};
@@ -476,12 +508,16 @@ int Editor::run() {
         Canvas canvas(logical_width_);
         paint(canvas);
         if (options_.frames && drawn+1==options_.frames && !options_.capture.empty()) renderer_.capture_next(options_.capture);
-        if (renderer_.draw(extract(),view(),canvas.vertices())) {
+        std::vector<MeshInstance> imported;
+        const auto blocks = extract(imported);
+        const auto actors = play_ ? play_->skin(1) : std::vector<SkinBatch>{};
+        const auto models = play_ ? play_->imported_meshes() : std::span<const MeshInstance>(imported);
+        if (renderer_.draw(blocks,view(),canvas.vertices(),actors,models)) {
             if (++drawn == options_.frames) break;
         } else SDL_Delay(10);
         if (options_.frames && now > deadline) throw std::runtime_error("Editor diagnostic timed out");
     }
-    std::cout << "editor_frames=" << drawn << " validation_errors=" << renderer_.validation_errors() << '\n';
+    std::cout << "editor_frames=" << drawn << " validation_errors=" << renderer_.validation_errors() << " mesh_triangles=" << renderer_.report().imported_triangles << '\n';
     return renderer_.validation_errors() == 0 && (!options_.frames || drawn == options_.frames) ? 0 : 1;
 }
 
@@ -489,9 +525,10 @@ int Editor::run() {
 
 int run_editor(int argc,char** argv) {
     if (argc<2 || std::string_view(argv[1]) == "--help") {
-        std::cout << "emberfall-editor SCENE [--validate] [--frames N [--capture FILE.ppm]]\n"
+        std::cout << "emberfall-editor SCENE [--mesh-dir DIRECTORY] [--validate] [--frames N [--capture FILE.ppm]]\n"
                      "emberfall-editor --new SCENE\n"
-                     "emberfall-editor --translate SCENE ID DX DY DZ\n";
+                     "emberfall-editor --translate SCENE ID DX DY DZ\n"
+                     "emberfall-editor --set-mesh SCENE ID MESH_NAME\n";
         return argc < 2 ? 1 : 0;
     }
     const std::string_view action = argv[1];
@@ -506,6 +543,18 @@ int run_editor(int argc,char** argv) {
         std::cout << "Revised node " << id[0] << " in " << argv[2] << '\n';
         return 0;
     }
+    if (action == "--set-mesh" && argc == 5) {
+        EditorFile file(argv[2]);
+        auto& document = file.document();
+        const auto id = number<SceneId>(argv[3]);
+        const auto& before = document.scene().nodes.at(id);
+        auto after = before;
+        assign(after,Field::mesh,argv[4]);
+        document.apply({{before,std::move(after)}});
+        file.write_recovery();
+        file.save();
+        return 0;
+    }
     if (action == "--new" && argc == 3) {
         if (std::filesystem::exists(argv[2])) throw std::runtime_error("Scene already exists");
         Scene empty{"Untitled room","Set an objective",{}};
@@ -516,9 +565,11 @@ int run_editor(int argc,char** argv) {
     Options options;
     options.file = argv[1];
     options.shaders = executable_directory()/"shaders";
+    options.mesh_directory = executable_directory()/"levels";
     for (int i=2; i<argc; ++i) {
         const std::string_view argument = argv[i];
         if (argument == "--validate") options.validation = true;
+        else if (argument == "--mesh-dir" && i+1<argc) options.mesh_directory = argv[++i];
         else if (argument == "--frames" && i+1<argc) options.frames = number<unsigned>(argv[++i]);
         else if (argument == "--capture" && i+1<argc) options.capture = argv[++i];
         else throw std::runtime_error("Unknown editor option");

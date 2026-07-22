@@ -43,6 +43,14 @@ bool linked(Kind kind) {
 
 }
 
+bool valid_mesh_name(std::string_view name) {
+    const auto alnum = [](char value) { return (value>='a' && value<='z') || (value>='0' && value<='9'); };
+    return name.size()>5 && name.size()<=80 && name.ends_with(".mesh") && alnum(name.front()) &&
+           std::ranges::all_of(name,[&](char value) {
+               return alnum(value) || value=='-' || value=='_' || value=='.';
+           });
+}
+
 std::string_view kind_name(Kind kind) {
     return kinds.at(static_cast<std::size_t>(kind));
 }
@@ -91,6 +99,9 @@ void validate_scene(const Scene& scene) {
             n.parameter < 0 || n.parameter > 3600) {
             invalid("invalid values at node " + std::to_string(id));
         }
+        if (!n.mesh.empty() && (n.kind!=Kind::decor || !valid_mesh_name(n.mesh))) {
+            invalid("mesh reference requires a decorative node and a local .mesh name");
+        }
         if (n.parent && n.kind != Kind::decor) invalid("gameplay and solid nodes must be roots");
         if (n.link) {
             const auto source = scene.nodes.find(n.link);
@@ -112,6 +123,7 @@ Scene parse_scene(std::string_view bytes) {
     std::string text;
     if (!std::getline(source, text) || text != "ember-scene 1") invalid("unsupported scene header");
     Scene scene;
+    std::map<SceneId,std::string> models;
     unsigned number = 1;
     bool seen_title = false;
     bool seen_objective = false;
@@ -139,10 +151,22 @@ Scene parse_scene(std::string_view bytes) {
             if (found == kinds.end()) invalid("unknown node kind on line " + std::to_string(number));
             n.kind = static_cast<Kind>(found - kinds.begin());
             if (!scene.nodes.emplace(n.id, n).second) invalid("duplicate node ID");
+        } else if (type == "model") {
+            SceneId id{};
+            std::string asset;
+            line >> id >> asset;
+            if (!valid_mesh_name(asset) || models.size()>=node_limit || !models.emplace(id,std::move(asset)).second) {
+                invalid("invalid or repeated model reference on line " + std::to_string(number));
+            }
         } else {
             invalid("unknown record on line " + std::to_string(number));
         }
         exact_end(line, number);
+    }
+    for (const auto& [id,asset] : models) {
+        const auto node = scene.nodes.find(id);
+        if (node==scene.nodes.end()) invalid("model reference has no node " + std::to_string(id));
+        node->second.mesh = asset;
     }
     validate_scene(scene);
     return scene;
@@ -163,6 +187,7 @@ std::string write_scene(const Scene& scene) {
         out << "node " << id << ' ' << n.parent << ' ' << kind_name(n.kind) << ' ' << std::quoted(n.name)
             << ' ' << n.position << ' ' << n.size << ' ' << n.yaw << ' ' << n.color
             << ' ' << n.link << ' ' << n.destination << ' ' << n.parameter << '\n';
+        if (!n.mesh.empty()) out << "model " << id << ' ' << n.mesh << '\n';
     }
     return out.str();
 }

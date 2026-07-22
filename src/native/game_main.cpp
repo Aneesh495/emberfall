@@ -155,7 +155,7 @@ private:
 
 Application::Application(const Options& options)
     : options_(options), platform_("The Lantern Reach",options.width,options.height,options.audio),
-      renderer_(platform_.window(),options.shaders,options.validation), campaign_(options.assets) {
+      renderer_(platform_.window(),options.shaders,options.validation), campaign_(options.assets,true) {
     std::filesystem::create_directories(options.profile);
     try {
         settings_ = read_settings(options.profile/"settings.save");
@@ -642,7 +642,7 @@ int Application::run() {
         const auto alpha = std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f);
         const auto items = world_->extract(alpha,remote);
         const auto animation = world_->skin(alpha,remote);
-        if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices(),animation)) {
+        if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices(),animation,world_->imported_meshes())) {
             ++drawn;
             if ((options_.frames && drawn == options_.frames) || script_done_) break;
         } else SDL_Delay(10);
@@ -656,7 +656,7 @@ int Application::run() {
     const auto& report = renderer_.report();
     std::cout << "frames=" << drawn << " surface=" << report.width << 'x' << report.height
               << " submitted=" << report.submitted << " culled=" << report.culled
-              << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors() << '\n';
+              << " mesh_triangles=" << report.imported_triangles << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors() << '\n';
     if (network_) {
         const auto& net = network_->stats();
         std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received

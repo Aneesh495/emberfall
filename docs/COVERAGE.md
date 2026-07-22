@@ -11,7 +11,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E05 | Bounded workers, DAG ordering, read/write validation, exception propagation and cancellation. [Scheduler](../src/scheduler.cpp) |
 | E06 | Fixed-step accumulation and position interpolation, overload cap, native pause and editor single-step. Tick edges are captured. Per-command wall-clock timestamps remain. [Game loop](../src/native/game_main.cpp) |
 | E07 | Versioned catalog, stable GUIDs, SHA-256 lineage and dependency-aware incremental cooking. [Catalog cooker](../scripts/cook.py) |
-| E08 | glTF import is open. Runtime content uses native scenes and authored cube and cloth geometry. [Content composer](../src/tools/main.cpp) |
+| E08 | glTF and GLB static geometry, node transforms and opaque metallic/roughness factors reach the game and editor. Texture, skin and clip imports remain. [Importer](GLTF.md) |
 | E09 | Bounded asynchronous scene loading, priority, cancellation and lease-safe reload. GPU residency and render-asset streaming remain. [Scene stream](../src/scene_stream.cpp) |
 | E10 | Canonical scene schema, hierarchy, prefab ID rebinding and editor round trips. Live inheritance, override migration and scene schema migrations remain. [Editor document](../src/editor.cpp) |
 | E11 | Explicit image access, layouts, timeline ownership and slot reuse. Transient aliasing and integrated graph inspection remain. [Render graph](../src/gpu/render_graph.hpp) |

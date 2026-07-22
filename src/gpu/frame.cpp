@@ -21,8 +21,8 @@ VkRenderingAttachmentInfo color_attachment(VkImageView view, std::array<float,4>
 
 }
 
-bool Renderer::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes) {
-    return state_->draw(items,view,overlay,meshes);
+bool Renderer::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes, std::span<const MeshInstance> imported) {
+    return state_->draw(items,view,overlay,meshes,imported);
 }
 
 void Renderer::capture_next(std::filesystem::path file) { state_->capture_file = std::move(file); }
@@ -178,7 +178,7 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
     check(vkEndCommandBuffer(cmd),"Finish recording frame");
 }
 
-bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes) {
+bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes, std::span<const MeshInstance> imported) {
     if (meshes.size()>skin_mesh_limit) throw std::runtime_error("Frame skin mesh limit");
     if (items.size() > instance_limit) throw std::runtime_error("Frame instance limit exceeded");
     if (overlay.size() > overlay_limit) throw std::runtime_error("Frame overlay limit exceeded");
@@ -255,21 +255,38 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     static_assert(sizeof(Lighting) == 80+32*light_limit);
     std::memcpy(frame.lighting.mapped,&lighting,sizeof(lighting));
     if (!overlay.empty()) std::memcpy(frame.overlay.mapped,overlay.data(),overlay.size_bytes());
-    std::array<SkinDraw,skin_mesh_limit> skin_draws{};
-    std::uint32_t skin_vertices = 0;
-    for (std::size_t i=0; i<meshes.size(); ++i) {
-        const auto& mesh = meshes[i];
-        if (mesh.vertices.empty() || mesh.vertices.size()%3 ||
-            mesh.vertices.size()+skin_vertices>skin_vertex_limit) throw std::runtime_error("Frame skin vertex budget");
-        skin_draws[i] = {skin_vertices,static_cast<std::uint32_t>(mesh.vertices.size())};
-        std::memcpy(static_cast<std::byte*>(frame.skin.mapped)+skin_vertices*sizeof(MeshVertex),
-                    mesh.vertices.data(),mesh.vertices.size()*sizeof(MeshVertex));
-        const RenderItem skin_instance{mesh.model,mesh.color,0};
-        std::memcpy(static_cast<std::byte*>(frame.skin_instances.mapped)+i*sizeof(RenderItem),&skin_instance,sizeof(skin_instance));
-        skin_vertices += skin_draws[i].count;
+    std::array<SkinDraw,uploaded_mesh_limit> skin_draws{};
+    std::size_t uploaded_draws = 0;
+    std::uint32_t uploaded_vertices = 0;
+    const auto upload_mesh = [&](std::span<const MeshVertex> vertices, const RenderItem& instance) {
+        if (vertices.empty() || vertices.size()%3 || uploaded_draws>=skin_draws.size() ||
+            vertices.size()>uploaded_vertex_limit-uploaded_vertices) {
+            throw std::runtime_error("Frame mesh upload budget exceeded");
+        }
+        auto& draw = skin_draws[uploaded_draws];
+        draw = {uploaded_vertices,static_cast<std::uint32_t>(vertices.size())};
+        std::memcpy(static_cast<std::byte*>(frame.skin.mapped)+uploaded_vertices*sizeof(MeshVertex),
+                    vertices.data(),vertices.size_bytes());
+        std::memcpy(static_cast<std::byte*>(frame.skin_instances.mapped)+uploaded_draws*sizeof(RenderItem),
+                    &instance,sizeof(instance));
+        ++uploaded_draws;
+        uploaded_vertices += draw.count;
+    };
+    for (const auto& mesh : meshes) {
+        if (mesh.vertices.size()>skin_vertex_limit-uploaded_vertices) throw std::runtime_error("Frame skin vertex budget");
+        upload_mesh(mesh.vertices,{mesh.model,mesh.color,0});
+    }
+    const auto animated_vertices = uploaded_vertices;
+    for (const auto& mesh : imported) {
+        if (!mesh.asset) throw std::runtime_error("Missing draw mesh");
+        for (const auto& primitive : mesh.asset->primitives) {
+            const auto& m = primitive.material;
+            const Vec3 color{mesh.tint.x*m.base_color.x,mesh.tint.y*m.base_color.y,mesh.tint.z*m.base_color.z};
+            upload_mesh(primitive.vertices,{mesh.model,color,0,{m.emissive.x,m.emissive.y,m.emissive.z,m.roughness},m.metallic});
+        }
     }
     record(frame,screen,view,camera,light,count,shadow_count,static_cast<std::uint32_t>(overlay.size()),
-           std::span(skin_draws).first(meshes.size()));
+           std::span(skin_draws).first(uploaded_draws));
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
     acquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -307,12 +324,12 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         wait(frame.finished);
         save_capture();
     }
-    const auto triangles = count*(view.dense_mesh ? 192U : 12U)+skin_vertices/3;
+    const auto triangles = count*(view.dense_mesh ? 192U : 12U)+uploaded_vertices/3;
     const unsigned draws = 1 + static_cast<unsigned>(count>0) + static_cast<unsigned>(shadow_count>0) +
-                           static_cast<unsigned>(!overlay.empty())+2*static_cast<unsigned>(meshes.size());
+                           static_cast<unsigned>(!overlay.empty())+2*static_cast<unsigned>(uploaded_draws);
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
-              properties.limits.timestampPeriod,timestamp_bits};
+              properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3};
     return true;
 }
 

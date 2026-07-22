@@ -67,7 +67,7 @@ import sys
 root = Path(sys.argv[1])
 levels = root / "levels"
 manifest = json.loads((levels / "manifest.json").read_text())
-assert set(manifest["outputs"]) == {p.name for p in levels.glob("*.scene")}
+assert set(manifest["outputs"]) == {p.name for p in levels.iterdir() if p.suffix in (".scene", ".mesh")}
 for name, record in manifest["outputs"].items():
     assert hashlib.sha256((levels / name).read_bytes()).hexdigest() == record["sha256"], name
 (root / "SHA256SUMS").write_text("".join(

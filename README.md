@@ -22,6 +22,7 @@ WASD moves, Space jumps, E uses a mechanism, Tab switches explorers, and F toggl
 
 The runtime advances a generation-checked archetype world at 60 Hz. The Vulkan renderer records an original directional shadow pass, opaque HDR lighting, and a display pass. The editor submits validated scene transactions and spawns an isolated play world. A versioned catalog tracks scene and prefab dependencies through cooking. The network host owns puzzle state and publishes bounded quantized snapshots.
 
+- [glTF import and editor placement](docs/GLTF.md)
 - [Architecture and source walkthroughs](docs/ARCHITECTURE.md)
 - [Engineering studies](docs/STUDIES.md)
 - [Architecture decisions](docs/DECISIONS.md)

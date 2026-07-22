@@ -92,7 +92,9 @@ SceneId SceneDocument::allocate_id() const {
     return largest+1;
 }
 
-std::unique_ptr<Game> SceneDocument::play() const { return std::make_unique<Game>(scene_,true); }
+std::unique_ptr<Game> SceneDocument::play(std::shared_ptr<const MeshLibrary> assets) const {
+    return std::make_unique<Game>(scene_,true,std::move(assets));
+}
 
 SceneDocument EditorFile::recover(const std::filesystem::path& path, const std::filesystem::path& journal,
                                   std::uint64_t& base, bool& recovered) {

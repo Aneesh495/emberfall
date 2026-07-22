@@ -48,11 +48,12 @@ add_dependencies(lantern-reach emberfall_levels)
 
 add_executable(emberfall-editor src/native/editor_main.cpp)
 target_link_libraries(emberfall-editor PRIVATE emberfall_native)
+add_dependencies(emberfall-editor emberfall_levels)
 
 install(TARGETS lantern-reach RUNTIME DESTINATION .)
 install(DIRECTORY "${EMB_SHADER_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/levels/" DESTINATION levels
-    FILES_MATCHING PATTERN "*.scene" PATTERN "manifest.json")
+    FILES_MATCHING PATTERN "*.scene" PATTERN "*.mesh" PATTERN "manifest.json")
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME Emberfall.txt)
 install(FILES "${sdl_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL3.txt)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/PLAY.md" DESTINATION .)

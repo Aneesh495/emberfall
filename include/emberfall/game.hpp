@@ -3,6 +3,7 @@
 #include "emberfall/animation.hpp"
 #include "emberfall/collision.hpp"
 #include "emberfall/navigation.hpp"
+#include "emberfall/mesh.hpp"
 #include "emberfall/world.hpp"
 
 namespace ember {
@@ -16,6 +17,8 @@ struct RenderItem {
     Mat4 model;
     Vec3 color;
     float emission{};
+    std::array<float,4> surface{0,0,0,-1};
+    float metallic{};
 };
 
 struct BodyPose {
@@ -67,7 +70,8 @@ struct SimulationState {
 class Game {
 public:
     static constexpr float timestep = 1.0f/60;
-    explicit Game(const Scene& scene, bool allow_incomplete = false);
+    explicit Game(const Scene& scene, bool allow_incomplete = false, std::shared_ptr<const MeshLibrary> assets = {});
+    std::span<const MeshInstance> imported_meshes() const { return imported_; }
 
     void tick(const std::array<Command,2>& commands);
     std::vector<RenderItem> extract(float alpha, std::optional<Vec3> remote_first = {}) const;
@@ -93,6 +97,9 @@ private:
     void interact(std::size_t player);
     void progress();
 
+    std::shared_ptr<const MeshLibrary> assets_;
+    std::vector<MeshInstance> imported_;
+    std::map<SceneId,const MeshAsset*> imported_nodes_;
     World<BodyPose, Instance, Mechanism, Player> world_;
     std::array<Entity,2> players_{};
     std::array<Vec3,2> spawn_{};

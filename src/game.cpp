@@ -45,7 +45,8 @@ void add_player(std::vector<RenderItem>& output, const Player& p, Vec3 feet, Vec
 
 }
 
-Game::Game(const Scene& scene, bool allow_incomplete) {
+Game::Game(const Scene& scene, bool allow_incomplete, std::shared_ptr<const MeshLibrary> assets)
+    : assets_(std::move(assets)) {
     validate_scene(scene);
     const auto transforms = resolve_transforms(scene);
     std::size_t spawns = 0;
@@ -58,6 +59,12 @@ Game::Game(const Scene& scene, bool allow_incomplete) {
         }
         exit = exit || node.kind == Kind::exit;
         const auto matrix = transforms.at(id);
+        if (assets_ && !node.mesh.empty()) {
+            if (const auto* asset = assets_->find(node.mesh)) {
+                imported_.push_back({asset,matrix,node.color});
+                imported_nodes_.emplace(id,asset);
+            }
+        }
         const auto position = transform_point(matrix,{});
         const Instance instance{id,node.link,node.kind,node.size,node.color,position,
                                 node.destination,node.parameter,matrix};
@@ -285,7 +292,7 @@ std::vector<RenderItem> Game::extract(float alpha, std::optional<Vec3> remote_fi
     world_.each<Instance,BodyPose,Mechanism>([&](Entity, const Instance& n, const BodyPose& pose, const Mechanism& s) {
         const auto position = lerp(pose.previous,pose.position,std::clamp(alpha,0.0f,1.0f));
         if (n.kind == Kind::decor) {
-            output.push_back({n.authored,n.color,n.parameter});
+            if (!imported_nodes_.contains(n.id)) output.push_back({n.authored,n.color,n.parameter});
             return;
         }
         float emission = 0;
