@@ -89,9 +89,10 @@ void Renderer::State::create_pipeline_layouts() {
     sample_info.bindingCount = 1;
     sample_info.pBindings = &binding;
     check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&sample_layout),"Create tonemap descriptor layout");
-    const std::array<VkDescriptorSetLayoutBinding,2> light_bindings{{
+    const std::array<VkDescriptorSetLayoutBinding,3> light_bindings{{
         {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
-        {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
+        {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {2,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
     }};
     sample_info.bindingCount = static_cast<std::uint32_t>(light_bindings.size());
     sample_info.pBindings = light_bindings.data();
@@ -154,6 +155,7 @@ void Renderer::State::create_frames() {
         make_buffer(frame.instances,2*instance_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.lighting,sizeof(Lighting),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        make_buffer(frame.light_tiles,TileLights::max_tiles*sizeof(TileLights::Mask),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         make_buffer(frame.skin,uploaded_vertex_limit*sizeof(MeshVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.skin_instances,uploaded_mesh_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_image(frame.shadow,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -250,8 +252,9 @@ bool Renderer::State::rebuild_swapchain() {
     }
     tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::tonemap);
     overlay_pipeline = gpu::pipeline(device,shaders,overlay_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::overlay);
-    const std::array<VkDescriptorPoolSize,2> pool_sizes{{
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots}
+    const std::array<VkDescriptorPoolSize,3> pool_sizes{{
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,slots}
     }};
     auto pool = vk<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
     pool.maxSets = 2*slots;
@@ -286,7 +289,12 @@ bool Renderer::State::rebuild_swapchain() {
         depth.dstSet = frame.light_set;
         depth.dstBinding = 1;
         depth.pImageInfo = &shadow;
-        const std::array writes{lighting,depth};
+        const VkDescriptorBufferInfo tiles{frame.light_tiles.buffer,0,VK_WHOLE_SIZE};
+        auto grid = lighting;
+        grid.dstBinding = 2;
+        grid.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        grid.pBufferInfo = &tiles;
+        const std::array writes{lighting,depth,grid};
         vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
     }
     dirty = false;

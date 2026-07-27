@@ -3,6 +3,7 @@
 #include "common.hpp"
 #include "render_graph.hpp"
 #include "emberfall/scheduler.hpp"
+#include "emberfall/lighting.hpp"
 
 #include <atomic>
 
@@ -15,7 +16,7 @@ struct Renderer::State {
     static constexpr VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
     static constexpr std::uint32_t shadow_size = 1536;
-    static constexpr std::size_t light_limit = 128;
+    static constexpr auto light_limit = TileLights::light_limit;
     struct Light {
         std::array<float,4> position_radius;
         std::array<float,4> color_power;
@@ -23,6 +24,7 @@ struct Renderer::State {
     struct Lighting {
         Mat4 shadow;
         std::array<float,4> direction_count;
+        std::array<std::uint32_t,4> tile_grid;
         std::array<Light,light_limit> lights{};
     };
     struct Image {
@@ -41,7 +43,7 @@ struct Renderer::State {
         VkSemaphore acquire{};
         std::uint64_t finished{};
         VkQueryPool timer{};
-        Buffer instances, overlay, lighting, skin, skin_instances;
+        Buffer instances, overlay, lighting, skin, skin_instances, light_tiles;
         Image hdr, depth, shadow;
         VkDescriptorSet sample{}, light_set{};
         bool attachments_written{}, shadow_written{};
@@ -101,6 +103,7 @@ struct Renderer::State {
     VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{};
     VkSampler sampler{}, shadow_sampler{};
     Scheduler culling{4};
+    TileLights tile_lights;
     std::vector<std::uint8_t> visibility;
     Buffer geometry, capture;
     std::filesystem::path capture_file;

@@ -91,6 +91,9 @@ def verify_render(raw):
         width, height, submitted, culled, triangles, casters, lights, draws = values
         check((width, height, submitted, culled, triangles, lights, draws) ==
               (1920, 1080, 10500, 0, 2016000, 128, 3) and casters > 0, "Missing render workload")
+        light_tiles, entries = int(row["light_tiles"]), int(row["tile_light_entries"])
+        check(light_tiles == ((width+31)//32)*((height+31)//32) and
+              0 < entries < light_tiles*lights, "Invalid forward light tile counters")
         bits = int(row["timestamp_bits"])
         period = float(row["period_ns"])
         check(16 <= bits <= 64 and 0 < period < 1000, "Invalid hardware timestamp scale")

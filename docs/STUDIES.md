@@ -26,7 +26,7 @@ Visibility intersects an instance's eight transformed corners with homogeneous c
 
 ## Materials and lighting
 
-The lighting shader accumulates ambient, directional, emissive, and distance-bounded local light in linear HDR. The display shader applies the filmic approximation and edge filter before surface conversion. The bounded forward loop does more work with more lamps and has no clustered bins yet. [The lighting shader](../shaders/scene.frag), [display shader](../shaders/tonemap.frag)
+The lighting shader accumulates ambient, directional, emissive, and distance-bounded local light in linear HDR. The display shader applies the filmic approximation and edge filter before surface conversion. The CPU conservatively projects each light's bounding box into 32-pixel tiles. The shader iterates a 128-bit membership mask and still tests physical radius before applying each light. A seeded oracle checks projected points inside every sampled sphere. The fixed 10,500-instance diagnostic measured 0.63 memberships per tile across 2,040 tiles with 128 lights, and GPU median declined from 14.76 ms in the earlier run to 6.04 ms in the tiled run. GPU p99 was 14.67 ms. These runs use different executable commits on the same M2 and establish a directional comparison. [The lighting shader](../shaders/scene.frag), [display shader](../shaders/tonemap.frag)
 
 ## Content cooking
 

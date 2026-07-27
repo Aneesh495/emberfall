@@ -32,7 +32,7 @@ int main(int argc,char** argv) {
         std::size_t drawn = 0;
         std::cerr << renderer.adapter() << '\n';
         std::cout << "serial,width,height,submitted,culled,triangles,casters,lights,draw_calls,host_ns,"
-                     "timestamp_bits,period_ns,start,shadow,opaque,display,reported_gpu_ms\n";
+                     "timestamp_bits,period_ns,start,shadow,opaque,display,reported_gpu_ms,light_tiles,tile_light_entries\n";
         std::cout << std::setprecision(12);
         for (unsigned iteration=0; iteration<400 && drawn<observations.size(); ++iteration) {
             SDL_Event event;
@@ -52,7 +52,7 @@ int main(int argc,char** argv) {
                       << past.draw_calls << ',' << host_ns << ',' << report.timestamp_valid_bits << ','
                       << report.timestamp_period_ns;
             for (auto stamp : report.timestamps) std::cout << ',' << stamp;
-            std::cout << ',' << report.gpu_ms << '\n';
+            std::cout << ',' << report.gpu_ms << ',' << past.light_tiles << ',' << past.tile_light_entries << '\n';
         }
         const auto& result = renderer.report();
         std::cerr << "frames=" << drawn << " validation_errors=" << renderer.validation_errors()

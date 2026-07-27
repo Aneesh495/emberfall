@@ -18,9 +18,13 @@ struct LocalLight {
 layout(std140,set=0,binding=0) uniform Lighting {
     mat4 lightProjection;
     vec4 directionCount;
+    uvec4 tileGrid;
     LocalLight lamps[128];
 } lighting;
 layout(set=0,binding=1) uniform sampler2D shadowDepth;
+layout(std430,set=0,binding=2) readonly buffer LightTiles {
+    uvec4 masks[];
+} tiles;
 
 float visibility(vec3 position) {
     vec4 lightClip = lighting.lightProjection*vec4(position,1.0);
@@ -80,17 +84,24 @@ void main() {
         result = tint.rgb*(ambient*(1.0-metallic)+sky*metallic) + surfaceData.rgb;
         result += materialLight(n,v,light,vec3(2.8,2.2,1.7))*sun;
     }
-    for (int i=0; i<int(lighting.directionCount.w); ++i) {
-        LocalLight lamp = lighting.lamps[i];
-        vec3 offset = lamp.positionRadius.xyz-worldPosition;
-        float distance2 = dot(offset,offset);
-        float radius2 = lamp.positionRadius.w*lamp.positionRadius.w;
-        if (distance2 >= radius2) continue;
-        float cone = 1.0-distance2/radius2;
-        float facing = max(dot(n,offset*inversesqrt(max(distance2,0.0001))),0.0);
-        vec3 radiance = lamp.colorPower.rgb*(lamp.colorPower.w*cone*cone/(1.0+distance2));
-        if (material) result += materialLight(n,v,offset*inversesqrt(max(distance2,0.0001)),radiance);
-        else result += tint.rgb*radiance*facing;
+    uvec2 tileCoord = uvec2(gl_FragCoord.xy) / lighting.tileGrid.z;
+    uvec4 mask = tiles.masks[tileCoord.y*lighting.tileGrid.x + tileCoord.x];
+    for (int word=0; word<4; ++word) {
+        uint bits = mask[word];
+        while (bits != 0u) {
+            int bit = findLSB(bits);
+            bits &= bits-1u;
+            LocalLight lamp = lighting.lamps[word*32 + bit];
+            vec3 offset = lamp.positionRadius.xyz-worldPosition;
+            float distance2 = dot(offset,offset);
+            float radius2 = lamp.positionRadius.w*lamp.positionRadius.w;
+            if (distance2 >= radius2) continue;
+            float cone = 1.0-distance2/radius2;
+            float facing = max(dot(n,offset*inversesqrt(max(distance2,0.0001))),0.0);
+            vec3 radiance = lamp.colorPower.rgb*(lamp.colorPower.w*cone*cone/(1.0+distance2));
+            if (material) result += materialLight(n,v,offset*inversesqrt(max(distance2,0.0001)),radiance);
+            else result += tint.rgb*radiance*facing;
+        }
     }
     result += tint.rgb*tint.a;
     float fog = 1.0-exp(-length(camera.eye.xyz-worldPosition)*0.021);

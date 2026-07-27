@@ -31,7 +31,7 @@ struct FrameReport {
     std::array<std::uint64_t,4> timestamps{};
     double timestamp_period_ns{};
     unsigned timestamp_valid_bits{};
-    std::uint32_t imported_triangles{};
+    std::uint32_t imported_triangles{}, light_tiles{}, tile_light_entries{};
 };
 
 class Renderer {

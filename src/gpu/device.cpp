@@ -213,6 +213,7 @@ Renderer::State::~State() {
             free(frame.instances);
             free(frame.overlay);
             free(frame.lighting);
+            free(frame.light_tiles);
             free(frame.skin);
             free(frame.skin_instances);
             free(frame.shadow);

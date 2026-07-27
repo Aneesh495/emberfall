@@ -232,7 +232,8 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         culling.run(Schedule(std::move(tasks)));
     }
     std::uint32_t count = 0, shadow_count = 0;
-    Lighting lighting{light,{direction.x,direction.y,direction.z,0},{}};
+    Lighting lighting{light,{direction.x,direction.y,direction.z,0},{},{}};
+    std::array<LightSphere,light_limit> spheres{};
     std::size_t lamps = 0;
     auto* upload = static_cast<std::byte*>(frame.instances.mapped);
     for (std::size_t i=0; i<items.size(); ++i) {
@@ -247,12 +248,17 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         }
         if (item.emission > 0.6f && lamps < light_limit) {
             const auto p = transform_point(item.model,{});
+            spheres[lamps] = {{p.x,p.y+0.2f,p.z},3.4f};
             lighting.lights[lamps++] = {{p.x,p.y+0.2f,p.z,3.4f},
                 {item.color.x,item.color.y,item.color.z,std::min(item.emission,4.0f)*1.3f}};
         }
     }
     lighting.direction_count[3] = static_cast<float>(lamps);
-    static_assert(sizeof(Lighting) == 80+32*light_limit);
+    tile_lights.build(camera,extent.width,extent.height,std::span(spheres).first(lamps));
+    lighting.tile_grid = {tile_lights.columns(),tile_lights.rows(),TileLights::tile_size,0};
+    const auto masks = tile_lights.masks();
+    std::memcpy(frame.light_tiles.mapped,masks.data(),masks.size_bytes());
+    static_assert(sizeof(Lighting) == 96+32*light_limit);
     std::memcpy(frame.lighting.mapped,&lighting,sizeof(lighting));
     if (!overlay.empty()) std::memcpy(frame.overlay.mapped,overlay.data(),overlay.size_bytes());
     std::array<SkinDraw,uploaded_mesh_limit> skin_draws{};
@@ -329,7 +335,8 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
                            static_cast<unsigned>(!overlay.empty())+2*static_cast<unsigned>(uploaded_draws);
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
-              properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3};
+              properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3,
+              static_cast<std::uint32_t>(masks.size()),tile_lights.entries()};
     return true;
 }
 
