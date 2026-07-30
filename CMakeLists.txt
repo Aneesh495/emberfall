@@ -18,6 +18,7 @@ endif()
 
 add_library(emberfall_core
     src/math.cpp src/scene.cpp src/files.cpp src/collision.cpp src/mesh.cpp src/lighting.cpp
+    src/convex.cpp src/convex_contact.cpp
     src/game.cpp src/campaign.cpp src/editor.cpp src/net_protocol.cpp
     src/net_session.cpp src/scheduler.cpp src/replay.cpp src/dynamics.cpp
     src/scene_stream.cpp src/navigation.cpp src/animation.cpp src/scarf.cpp)
@@ -123,4 +124,9 @@ if(BUILD_TESTING)
     add_executable(lighting_tests tests/lighting.cpp)
     target_link_libraries(lighting_tests PRIVATE emberfall_core)
     add_test(NAME light_tiles COMMAND lighting_tests)
+endif()
+if(BUILD_TESTING)
+    add_executable(convex_dynamics_tests tests/convex_dynamics.cpp)
+    target_link_libraries(convex_dynamics_tests PRIVATE emberfall_core)
+    add_test(NAME convex_dynamics COMMAND convex_dynamics_tests)
 endif()

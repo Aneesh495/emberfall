@@ -1,10 +1,13 @@
 #pragma once
 
 #include "emberfall/collision.hpp"
+#include "emberfall/convex.hpp"
+
+#include <memory>
 
 namespace ember {
 
-enum class Shape : std::uint8_t { box, sphere, capsule };
+enum class Shape : std::uint8_t { box, sphere, capsule, convex };
 
 struct RigidBody {
     SceneId id{};
@@ -16,6 +19,10 @@ struct RigidBody {
     std::uint16_t layer{1}, mask{0xffff};
     bool kinematic{}, trigger{}, continuous{}, sleeping{};
     unsigned calm_ticks{};
+    Quat orientation{};
+    Vec3 angular_velocity{}, inverse_inertia{};
+    bool angular{};
+    std::shared_ptr<const ConvexHull> hull{};
 };
 
 struct Contact {
@@ -23,6 +30,7 @@ struct Contact {
     Vec3 normal;
     float penetration{};
     bool trigger{};
+    Vec3 point{};
 };
 
 std::optional<Contact> intersect(const RigidBody& first,const RigidBody& second);
@@ -41,6 +49,7 @@ public:
     void add(RigidBody body);
     const RigidBody& body(SceneId id) const;
     void impulse(SceneId id,Vec3 impulse);
+    void impulse_at(SceneId id,Vec3 impulse,Vec3 world_point);
     PhysicsReport step(float dt);
     std::span<const Contact> contacts() const { return contacts_; }
 private:

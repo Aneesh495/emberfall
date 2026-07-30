@@ -2,6 +2,31 @@
 
 namespace ember {
 
+Quat normalized(Quat q) {
+    const auto size = std::sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);
+    return size>1e-8f ? Quat{q.x/size,q.y/size,q.z/size,q.w/size} : Quat{};
+}
+
+Quat operator*(Quat a,Quat b) {
+    const Vec3 av{a.x,a.y,a.z}, bv{b.x,b.y,b.z};
+    const auto v = bv*a.w + av*b.w + cross(av,bv);
+    return {v.x,v.y,v.z,a.w*b.w-dot(av,bv)};
+}
+
+Vec3 rotate(Quat q,Vec3 value) {
+    const Vec3 axis{q.x,q.y,q.z};
+    const auto doubled = cross(axis,value)*2;
+    return value+doubled*q.w+cross(axis,doubled);
+}
+
+Quat integrate_rotation(Quat rotation,Vec3 world_omega,float seconds) {
+    const auto speed = length(world_omega);
+    const auto half_angle = speed*seconds*0.5f;
+    const auto scale = speed>1e-6f ? std::sin(half_angle)/speed : seconds*0.5f;
+    const auto q = world_omega*scale;
+    return normalized(Quat{q.x,q.y,q.z,std::cos(half_angle)}*rotation);
+}
+
 Quat yaw_rotation(float radians) {
     return {0, std::sin(radians*0.5f), 0, std::cos(radians*0.5f)};
 }

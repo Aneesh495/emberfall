@@ -21,7 +21,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E15 | HDR, exposure and a spatial edge filter. Motion vectors and temporal history remain. [Display shader](../shaders/tonemap.frag) |
 | E16 | Distance fog and editor gizmo geometry. Particles, decals and bounded translucent scene rendering remain. [Lighting shader](../shaders/scene.frag) |
 | E17 | Device identity, shader load validation, raw GPU timestamps and framebuffer readback. Integrated pass and resource inspection remain. [Frame recorder](../src/gpu/frame.cpp) |
-| E18 | Translating box, sphere and capsule contacts. Convex hull and angular rigid-body dynamics remain. [Dynamics](../src/dynamics.cpp) |
+| E18 | Boxes, spheres, capsules and validated convex hulls with angular impulses. Single-witness contacts and bounded continuous sweeps. [Angular physics](ANGULAR_PHYSICS.md) |
 | E19 | Warm starts, friction, restitution, sleeping, layer masks, triggers and conservative CCD against static boxes. [Dynamics fixtures](../tests/dynamics.cpp) |
 | E20 | Swept character motion, small steps, grounded jumping, crouch and platform carry. General slopes remain. [Character controller](../src/collision.cpp) |
 | E21 | Ordered joint tracks, interpolation and blending with weighted cloth skinning in the visible and shadow passes. Imported character rigs and a general animation state machine remain. [Animation](../src/animation.cpp) |

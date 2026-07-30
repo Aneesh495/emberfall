@@ -36,6 +36,10 @@ struct Quat {
     friend constexpr bool operator==(Quat, Quat) = default;
 };
 
+Quat normalized(Quat q);
+Quat operator*(Quat a,Quat b);
+Vec3 rotate(Quat q,Vec3 value);
+Quat integrate_rotation(Quat rotation,Vec3 world_omega,float seconds);
 Quat yaw_rotation(float radians);
 Quat slerp(Quat a, Quat b, float t);
 

@@ -1,4 +1,5 @@
 #include "emberfall/dynamics.hpp"
+#include "convex_contact.hpp"
 
 #include <stdexcept>
 
@@ -7,6 +8,7 @@ namespace {
 
 constexpr std::size_t body_limit = 4096;
 constexpr std::size_t contact_limit = 32768;
+constexpr std::size_t hull_body_limit = 64;
 
 Vec3 extent(const RigidBody& body) {
     if (body.shape == Shape::box) return body.half;
@@ -14,12 +16,59 @@ Vec3 extent(const RigidBody& body) {
 }
 
 Box bounds(const RigidBody& body) {
+    if (dynamics_detail::needs_convex_path(body)) return dynamics_detail::rotated_bounds(body);
     const auto half = extent(body);
     return {body.position-half,body.position+half};
 }
 
 bool dynamic(const RigidBody& body) { return !body.kinematic && body.inverse_mass > 0; }
 float mass(const RigidBody& body) { return dynamic(body) && !body.sleeping ? body.inverse_mass : 0; }
+
+Vec3 transform_tensor(Quat q,Vec3 diagonal,Vec3 vector) {
+    const auto local = rotate({-q.x,-q.y,-q.z,q.w},vector);
+    return rotate(q,{local.x*diagonal.x,local.y*diagonal.y,local.z*diagonal.z});
+}
+
+Vec3 inverse_inertia(const RigidBody& body,Vec3 torque) {
+    if (!body.angular || !dynamic(body) || body.sleeping) return {};
+    return transform_tensor(body.orientation,body.inverse_inertia,torque);
+}
+
+void advance_orientation(RigidBody& body,float dt) {
+    const auto q = body.orientation;
+    const auto omega = body.angular_velocity;
+    if (body.kinematic) {
+        body.orientation = integrate_rotation(q,omega,dt);
+        return;
+    }
+    const auto inverse = body.inverse_inertia;
+    const auto momentum = transform_tensor(q,{1/inverse.x,1/inverse.y,1/inverse.z},omega);
+    const auto midpoint = integrate_rotation(q,omega,dt*0.5f);
+    body.orientation = integrate_rotation(q,transform_tensor(midpoint,inverse,momentum),dt);
+    body.angular_velocity = transform_tensor(body.orientation,inverse,momentum);
+}
+
+Vec3 default_inertia(const RigidBody& body) {
+    if (body.shape==Shape::sphere) {
+        const auto inertia = 2.5f*body.inverse_mass/(body.radius*body.radius);
+        return {inertia,inertia,inertia};
+    }
+    const auto [x,y,z] = extent(body);
+    return {3*body.inverse_mass/(y*y+z*z),3*body.inverse_mass/(x*x+z*z),3*body.inverse_mass/(x*x+y*y)};
+}
+
+Vec3 contact_velocity(const RigidBody& body,Vec3 arm) {
+    return body.velocity+cross(body.angular_velocity,arm);
+}
+
+Vec3 response(const RigidBody& body,Vec3 arm,Vec3 impulse) {
+    return impulse*mass(body)+cross(inverse_inertia(body,cross(arm,impulse)),arm);
+}
+
+void apply(RigidBody& body,Vec3 arm,Vec3 impulse) {
+    body.velocity += impulse*mass(body);
+    body.angular_velocity += inverse_inertia(body,cross(arm,impulse));
+}
 
 std::optional<Contact> boxes(const RigidBody& a,const RigidBody& b) {
     const auto delta = b.position-a.position;
@@ -85,7 +134,16 @@ void wake(RigidBody& body) {
 
 void validate(const RigidBody& body) {
     const auto dimensions = extent(body);
-    if (!body.id || static_cast<unsigned>(body.shape) > static_cast<unsigned>(Shape::capsule) ||
+    const auto q = body.orientation;
+    const auto quaternion_squared = q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w;
+    const bool hull = body.shape==Shape::convex;
+    if (!body.id || static_cast<unsigned>(body.shape) > static_cast<unsigned>(Shape::convex) ||
+        hull!=static_cast<bool>(body.hull) || !std::isfinite(quaternion_squared) ||
+        std::abs(quaternion_squared-1)>0.002f || !finite(body.angular_velocity) ||
+        dot(body.angular_velocity,body.angular_velocity)>1e6f || !finite(body.inverse_inertia) ||
+        std::max({std::abs(body.position.x),std::abs(body.position.y),std::abs(body.position.z)})>8192 ||
+        (!body.angular && (body.angular_velocity!=Vec3{} || body.inverse_inertia!=Vec3{})) ||
+        (body.continuous && (dynamics_detail::needs_convex_path(body) || (body.angular && body.shape!=Shape::sphere))) ||
         !finite(body.position) || !finite(body.velocity) || !finite(dimensions) ||
         std::min({dimensions.x,dimensions.y,dimensions.z}) < 0.01f ||
         std::max({dimensions.x,dimensions.y,dimensions.z}) > 100 || !std::isfinite(body.radius) ||
@@ -95,11 +153,22 @@ void validate(const RigidBody& body) {
         !std::isfinite(body.friction) || body.friction < 0 || body.friction > 2 || !body.layer) {
         throw std::runtime_error("Rigid body outside supported bounds");
     }
+    if (body.angular && dynamic(body)) {
+        const auto inverse = body.inverse_inertia;
+        const bool explicit_inertia = inverse!=Vec3{};
+        if ((hull && !explicit_inertia) || (explicit_inertia &&
+            (std::min({inverse.x,inverse.y,inverse.z})<=0 || std::max({inverse.x,inverse.y,inverse.z})>1e8f))) {
+            throw std::runtime_error("Angular hull or body requires bounded positive inverse inertia");
+        }
+    }
 }
 
 }
 
 std::optional<Contact> intersect(const RigidBody& a,const RigidBody& b) {
+    if (a.angular || b.angular || dynamics_detail::needs_convex_path(a) || dynamics_detail::needs_convex_path(b)) {
+        return dynamics_detail::convex_contact(a,b);
+    }
     if (a.shape == Shape::box && b.shape == Shape::box) return boxes(a,b);
     if (a.shape != Shape::box && b.shape != Shape::box) return round_pair(a,b);
     if (b.shape == Shape::box) return rounded_box(a,b);
@@ -116,6 +185,9 @@ struct Dynamics::Constraint {
     Contact contact;
     float lambda{}, bounce{}, friction{};
     Vec3 tangent;
+    Vec3 arm_a{}, arm_b{}, u{}, v{};
+    float normal_inverse_mass{}, tangent_inverse_mass_u{}, tangent_inverse_mass_uv{}, tangent_inverse_mass_v{};
+    bool angular{};
 };
 
 Dynamics::Dynamics(Vec3 gravity) : gravity_(gravity) {
@@ -134,18 +206,35 @@ const RigidBody& Dynamics::body(SceneId id) const { return bodies_[index(id)]; }
 void Dynamics::add(RigidBody body) {
     validate(body);
     if (bodies_.size() == body_limit) throw std::length_error("Rigid body limit");
+    if (body.shape==Shape::convex && std::ranges::count(bodies_,Shape::convex,&RigidBody::shape)>=
+        static_cast<std::ptrdiff_t>(hull_body_limit)) throw std::length_error("Convex hull body limit");
+    body.orientation = normalized(body.orientation);
+    if (body.angular && dynamic(body) && body.inverse_inertia==Vec3{}) {
+        body.inverse_inertia = default_inertia(body);
+    }
     if (body.shape != Shape::capsule) body.half_segment = 0;
     const auto where = std::ranges::lower_bound(bodies_,body.id,{},&RigidBody::id);
     if (where != bodies_.end() && where->id == body.id) throw std::runtime_error("Duplicate rigid body ID");
     bodies_.insert(where,body);
 }
 
-void Dynamics::impulse(SceneId id,Vec3 value) {
-    if (!finite(value) || length(value)>10000) throw std::runtime_error("Impulse outside supported range");
+void Dynamics::impulse(SceneId id,Vec3 value) { impulse_at(id,value,body(id).position); }
+
+void Dynamics::impulse_at(SceneId id,Vec3 value,Vec3 world_point) {
     auto& body = bodies_[index(id)];
+    const auto arm = world_point-body.position;
+    if (!finite(value) || length(value)>10000 || !finite(arm) || length(arm)>1000) {
+        throw std::runtime_error("Impulse outside supported range");
+    }
     if (!dynamic(body)) return;
-    wake(body);
-    body.velocity += value*body.inverse_mass;
+    auto changed = body;
+    wake(changed);
+    apply(changed,arm,value);
+    if (!finite(changed.velocity) || !finite(changed.angular_velocity) ||
+        dot(changed.angular_velocity,changed.angular_velocity)>1e6f) {
+        throw std::runtime_error("Impulse exceeds dynamics velocity bounds");
+    }
+    body = std::move(changed);
 }
 
 PhysicsReport Dynamics::step(float dt) {
@@ -154,7 +243,7 @@ PhysicsReport Dynamics::step(float dt) {
     obstacles_.clear();
     for (const auto& body : bodies_) {
         if (!body.kinematic && !dynamic(body) && !body.trigger && body.shape == Shape::box &&
-            body.layer == 1 && body.mask == 0xffff) obstacles_.push_back({body.id,bounds(body)});
+            body.layer == 1 && body.mask == 0xffff && !dynamics_detail::needs_convex_path(body)) obstacles_.push_back({body.id,bounds(body)});
     }
     static_space_.rebuild(obstacles_);
     for (auto& body : bodies_) {
@@ -171,6 +260,7 @@ PhysicsReport Dynamics::step(float dt) {
             }
         }
         body.position += delta;
+        if (body.angular) advance_orientation(body,dt);
     }
 
     boxes_.resize(bodies_.size());
@@ -204,7 +294,10 @@ PhysicsReport Dynamics::step(float dt) {
             if (contacts_.size() == contact_limit) throw std::length_error("Dynamics contact budget exceeded");
             contacts_.push_back(*contact);
             if (contact->trigger) continue;
-            const auto relative = b.velocity-a.velocity;
+            const bool angular = a.angular || b.angular;
+            const Vec3 arm_a = angular ? contact->point-a.position : Vec3{};
+            const Vec3 arm_b = angular ? contact->point-b.position : Vec3{};
+            const auto relative = angular ? contact_velocity(b,arm_b)-contact_velocity(a,arm_a) : b.velocity-a.velocity;
             if (dot(relative,relative)>0.15f) {
                 if (a.sleeping && (dynamic(b) || b.kinematic)) wake(a);
                 if (b.sleeping && (dynamic(a) || a.kinematic)) wake(b);
@@ -213,7 +306,22 @@ PhysicsReport Dynamics::step(float dt) {
             const float restitution = approach < -0.85f ? -approach*std::min(a.restitution,b.restitution) : 0;
             if (contact->normal.y < -0.6f) supported_[first] = 1;
             if (contact->normal.y > 0.6f) supported_[second] = 1;
-            constraints_.push_back({first,second,*contact,0,restitution,std::sqrt(a.friction*b.friction),{}});
+            Constraint row{first,second,*contact,0,restitution,std::sqrt(a.friction*b.friction),{}};
+            if (angular) {
+                row.angular = true;
+                row.arm_a = arm_a;
+                row.arm_b = arm_b;
+                const auto n = contact->normal;
+                row.u = unit(cross(n,std::abs(n.x)<0.75f ? Vec3{1,0,0} : Vec3{0,1,0}));
+                row.v = cross(n,row.u);
+                const auto combined = [&](Vec3 axis) { return response(a,arm_a,axis)+response(b,arm_b,axis); };
+                row.normal_inverse_mass = dot(n,combined(n));
+                const auto along_u = combined(row.u);
+                row.tangent_inverse_mass_u = dot(row.u,along_u);
+                row.tangent_inverse_mass_uv = dot(row.v,along_u);
+                row.tangent_inverse_mass_v = dot(row.v,combined(row.v));
+            }
+            constraints_.push_back(row);
         }
     }
     const auto key = [](const auto& c) { return std::pair{c.contact.first,c.contact.second}; };
@@ -222,11 +330,18 @@ PhysicsReport Dynamics::step(float dt) {
     for (auto& row : constraints_) {
         const auto old = std::ranges::lower_bound(previous_,key(row),{},key);
         if (old == previous_.end() || key(*old) != key(row) || dot(old->contact.normal,row.contact.normal)<0.97f) continue;
+        if (row.angular && length(row.contact.point-old->contact.point)>0.075f) continue;
         row.lambda = old->lambda*0.82f;
         row.tangent = old->tangent*0.82f;
+        if (row.angular) row.tangent = row.tangent-row.contact.normal*dot(row.tangent,row.contact.normal);
         const auto impulse = row.contact.normal*row.lambda+row.tangent;
-        bodies_[row.first].velocity += -impulse*mass(bodies_[row.first]);
-        bodies_[row.second].velocity += impulse*mass(bodies_[row.second]);
+        if (row.angular) {
+            apply(bodies_[row.first],row.arm_a,-impulse);
+            apply(bodies_[row.second],row.arm_b,impulse);
+        } else {
+            bodies_[row.first].velocity += -impulse*mass(bodies_[row.first]);
+            bodies_[row.second].velocity += impulse*mass(bodies_[row.second]);
+        }
     }
     for (unsigned iteration=0; iteration<10; ++iteration) {
         for (auto& row : constraints_) {
@@ -235,6 +350,29 @@ PhysicsReport Dynamics::step(float dt) {
             const auto inv_a = mass(a), inv_b = mass(b), total = inv_a+inv_b;
             if (total <= 0) continue;
             const auto n = row.contact.normal;
+            if (row.angular) {
+                const auto relative = contact_velocity(b,row.arm_b)-contact_velocity(a,row.arm_a);
+                const auto lambda = std::max(0.0f,row.lambda+(row.bounce-dot(relative,n))/row.normal_inverse_mass);
+                const auto normal_impulse = n*(lambda-row.lambda);
+                row.lambda = lambda;
+                apply(a,row.arm_a,-normal_impulse);
+                apply(b,row.arm_b,normal_impulse);
+                const auto tangent_speed = contact_velocity(b,row.arm_b)-contact_velocity(a,row.arm_a);
+                const auto ku = row.tangent_inverse_mass_u, kv = row.tangent_inverse_mass_v;
+                const auto cross_term = row.tangent_inverse_mass_uv;
+                const auto determinant = ku*kv-cross_term*cross_term;
+                if (determinant<=1e-12f) continue;
+                const auto x = dot(tangent_speed,row.u), y = dot(tangent_speed,row.v);
+                auto friction = row.tangent + (row.u*(cross_term*y-kv*x)+row.v*(cross_term*x-ku*y))/determinant;
+                const auto limit = row.friction*lambda;
+                const auto size = length(friction);
+                if (size>limit && size>0) friction = friction*(limit/size);
+                const auto tangent_impulse = friction-row.tangent;
+                row.tangent = friction;
+                apply(a,row.arm_a,-tangent_impulse);
+                apply(b,row.arm_b,tangent_impulse);
+                continue;
+            }
             const auto relative = b.velocity-a.velocity;
             const auto lambda = std::max(0.0f,row.lambda+(row.bounce-dot(relative,n))/total);
             auto impulse = n*(lambda-row.lambda);
@@ -271,13 +409,18 @@ PhysicsReport Dynamics::step(float dt) {
     }
     for (std::size_t i=0; i<bodies_.size(); ++i) {
         auto& body = bodies_[i];
-        if (!finite(body.position) || !finite(body.velocity)) throw std::runtime_error("Nonfinite dynamics state");
+        if (!finite(body.position) || !finite(body.velocity) || !finite(body.angular_velocity) ||
+            dot(body.angular_velocity,body.angular_velocity)>1e6f) {
+            throw std::runtime_error("Dynamics state outside finite angular bounds");
+        }
         if (!dynamic(body)) continue;
-        if (supported_[i] && dot(body.velocity,body.velocity)<0.00025f) {
+        if (supported_[i] && dot(body.velocity,body.velocity)<0.00025f &&
+            dot(body.angular_velocity,body.angular_velocity)<0.00025f) {
             if (body.calm_ticks < 150) ++body.calm_ticks;
             if (body.calm_ticks >= 150) {
                 body.sleeping = true;
                 body.velocity = {};
+                body.angular_velocity = {};
             }
         } else wake(body);
         report.sleeping += body.sleeping;
