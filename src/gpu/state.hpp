@@ -4,6 +4,7 @@
 #include "render_graph.hpp"
 #include "emberfall/scheduler.hpp"
 #include "emberfall/lighting.hpp"
+#include "emberfall/shadow.hpp"
 
 #include <atomic>
 
@@ -15,16 +16,16 @@ struct Renderer::State {
     static constexpr std::uint32_t overlay_limit = 131072;
     static constexpr VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
-    static constexpr std::uint32_t shadow_size = 1536;
+    static constexpr std::uint32_t shadow_instance_limit = instance_limit*4;
     static constexpr auto light_limit = TileLights::light_limit;
     struct Light {
         std::array<float,4> position_radius;
         std::array<float,4> color_power;
     };
     struct Lighting {
-        Mat4 shadow;
-        std::array<float,4> direction_count;
-        std::array<std::uint32_t,4> tile_grid;
+        std::array<Mat4,ShadowViews::limit> shadow;
+        std::array<float,4> camera_forward, cascade_ends, direction_count;
+        std::array<std::uint32_t,4> tile_grid, shadow_options;
         std::array<Light,light_limit> lights{};
     };
     struct Image {
@@ -69,8 +70,9 @@ struct Renderer::State {
     static constexpr auto uploaded_vertex_limit = skin_vertex_limit+MeshLibrary::vertex_limit;
     static constexpr auto uploaded_mesh_limit = skin_mesh_limit+MeshLibrary::primitive_limit;
     struct SkinDraw { std::uint32_t first{}, count{}; };
-    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, const Mat4& light, std::uint32_t count, std::uint32_t shadow_count,
-                std::uint32_t overlay_count,std::span<const SkinDraw> meshes);
+    struct ShadowDraw { Mat4 projection; std::uint32_t first{}, count{}; };
+    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera,std::uint32_t count,
+                std::span<const ShadowDraw> shadows,std::uint32_t overlay_count,std::span<const SkinDraw> meshes);
     void save_capture();
     void wait(std::uint64_t serial) const;
     void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect, VkExtent2D dimensions = {});
@@ -104,7 +106,7 @@ struct Renderer::State {
     VkSampler sampler{}, shadow_sampler{};
     Scheduler culling{4};
     TileLights tile_lights;
-    std::vector<std::uint8_t> visibility;
+    std::vector<std::uint16_t> visibility;
     Buffer geometry, capture;
     std::filesystem::path capture_file;
     bool capture_supported{};

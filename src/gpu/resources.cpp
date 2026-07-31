@@ -152,14 +152,14 @@ void Renderer::State::create_frames() {
             query.queryCount = 4;
             check(vkCreateQueryPool(device,&query,nullptr,&frame.timer),"Create frame timer queries");
         }
-        make_buffer(frame.instances,2*instance_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.instances,(instance_limit+shadow_instance_limit)*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.lighting,sizeof(Lighting),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
         make_buffer(frame.light_tiles,TileLights::max_tiles*sizeof(TileLights::Mask),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         make_buffer(frame.skin,uploaded_vertex_limit*sizeof(MeshVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.skin_instances,uploaded_mesh_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_image(frame.shadow,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                   VK_IMAGE_ASPECT_DEPTH_BIT,{shadow_size,shadow_size});
+                   VK_IMAGE_ASPECT_DEPTH_BIT,{ShadowViews::atlas_pixels,ShadowViews::atlas_pixels});
     }
 }
 

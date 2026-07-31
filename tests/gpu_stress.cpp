@@ -32,7 +32,7 @@ int main(int argc,char** argv) {
         std::size_t drawn = 0;
         std::cerr << renderer.adapter() << '\n';
         std::cout << "serial,width,height,submitted,culled,triangles,casters,lights,draw_calls,host_ns,"
-                     "timestamp_bits,period_ns,start,shadow,opaque,display,reported_gpu_ms,light_tiles,tile_light_entries\n";
+                     "timestamp_bits,period_ns,start,shadow,opaque,display,reported_gpu_ms,light_tiles,tile_light_entries,shadow_maps,shadow_draws\n";
         std::cout << std::setprecision(12);
         for (unsigned iteration=0; iteration<400 && drawn<observations.size(); ++iteration) {
             SDL_Event event;
@@ -52,14 +52,15 @@ int main(int argc,char** argv) {
                       << past.draw_calls << ',' << host_ns << ',' << report.timestamp_valid_bits << ','
                       << report.timestamp_period_ns;
             for (auto stamp : report.timestamps) std::cout << ',' << stamp;
-            std::cout << ',' << report.gpu_ms << ',' << past.light_tiles << ',' << past.tile_light_entries << '\n';
+            std::cout << ',' << report.gpu_ms << ',' << past.light_tiles << ',' << past.tile_light_entries << ','
+                      << past.shadow_maps << ',' << past.shadow_draws << '\n';
         }
         const auto& result = renderer.report();
         std::cerr << "frames=" << drawn << " validation_errors=" << renderer.validation_errors()
                   << " size=" << result.width << 'x' << result.height << " triangles=" << result.triangles << '\n';
         return drawn == observations.size() && result.width == 1920 && result.height == 1080 &&
                result.submitted >= 10000 && result.triangles >= 2000000 && result.lights == 128 &&
-               result.timestamp_valid_bits > 0 && renderer.validation_errors() == 0 ? 0 : 1;
+               result.shadow_maps==9 && result.shadow_draws>=3 && result.timestamp_valid_bits > 0 && renderer.validation_errors() == 0 ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

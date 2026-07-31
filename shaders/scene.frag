@@ -16,9 +16,12 @@ struct LocalLight {
     vec4 colorPower;
 };
 layout(std140,set=0,binding=0) uniform Lighting {
-    mat4 lightProjection;
+    mat4 shadowProjection[9];
+    vec4 cameraForward;
+    vec4 cascadeEnds;
     vec4 directionCount;
     uvec4 tileGrid;
+    uvec4 shadowOptions;
     LocalLight lamps[128];
 } lighting;
 layout(set=0,binding=1) uniform sampler2D shadowDepth;
@@ -26,19 +29,44 @@ layout(std430,set=0,binding=2) readonly buffer LightTiles {
     uvec4 masks[];
 } tiles;
 
-float visibility(vec3 position) {
-    vec4 lightClip = lighting.lightProjection*vec4(position,1.0);
-    vec3 coord = lightClip.xyz/lightClip.w;
+float sampleShadow(int viewIndex,vec3 position,float bias) {
+    vec4 clip = lighting.shadowProjection[viewIndex]*vec4(position,1.0);
+    if (clip.w<=0.0) return 1.0;
+    vec3 coord = clip.xyz/clip.w;
     vec2 uv = coord.xy*0.5+0.5;
-    if (any(lessThanEqual(uv,vec2(0.0))) || any(greaterThanEqual(uv,vec2(1.0))) ||
+    if (any(lessThan(uv,vec2(0.0))) || any(greaterThan(uv,vec2(1.0))) ||
         coord.z<=0.0 || coord.z>=1.0) return 1.0;
+    int columns = int(lighting.shadowOptions.x);
+    float side = float(lighting.shadowOptions.y);
+    vec2 origin = vec2(viewIndex%columns,viewIndex/columns)*side;
     vec2 texel = 1.0/vec2(textureSize(shadowDepth,0));
     float sum = 0.0;
     for (int y=-1; y<=1; ++y) for (int x=-1; x<=1; ++x) {
-        float stored = texture(shadowDepth,uv+vec2(x,y)*texel).r;
-        sum += coord.z-0.00045 <= stored ? 1.0 : 0.0;
+        vec2 pixel = clamp(uv*side+vec2(x,y),vec2(0.5),vec2(side-0.5));
+        float stored = texture(shadowDepth,(origin+pixel)*texel).r;
+        sum += coord.z-bias <= stored ? 1.0 : 0.0;
     }
     return sum/9.0;
+}
+
+float sunVisibility(vec3 position,float normalLight) {
+    float z = dot(position-camera.eye.xyz,lighting.cameraForward.xyz);
+    int index = z<lighting.cascadeEnds.x ? 0 : z<lighting.cascadeEnds.y ? 1 : 2;
+    float first = index==0 ? lighting.cameraForward.w : lighting.cascadeEnds[index-1];
+    float end = lighting.cascadeEnds[index];
+    float fade = smoothstep(end-(end-first)*0.085,end,z);
+    float bias = max(0.00028,0.00078*(1.0-normalLight));
+    float current = sampleShadow(index,position,bias);
+    if (fade<=0.0) return current;
+    float next = index==2 ? 1.0 : sampleShadow(index+1,position,bias);
+    return mix(current,next,fade);
+}
+
+int pointFace(vec3 direction) {
+    vec3 weight = abs(direction);
+    if (weight.x>=weight.y && weight.x>=weight.z) return direction.x>=0.0 ? 0 : 1;
+    if (weight.y>=weight.z) return direction.y>=0.0 ? 2 : 3;
+    return direction.z>=0.0 ? 4 : 5;
 }
 
 vec3 materialLight(vec3 n, vec3 v, vec3 l, vec3 radiance) {
@@ -75,7 +103,7 @@ void main() {
     vec2 tile = abs(fract(worldPosition.xz + 0.5) - 0.5);
     float grid = 1.0 - smoothstep(0.01, 0.04, min(tile.x,tile.y));
     float surface = 1.0 - grid*max(n.y, 0.0)*0.16;
-    float sun = lambert > 0.0 ? visibility(worldPosition) : 0.0;
+    float sun = lambert > 0.0 ? sunVisibility(worldPosition,lambert) : 0.0;
     vec3 result = tint.rgb*(ambient+warm*sun)*surface + highlight*sun + grazing*vec3(0.03,0.065,0.10);
     bool material = surfaceData.w >= 0.0;
     if (material) {
@@ -91,7 +119,8 @@ void main() {
         while (bits != 0u) {
             int bit = findLSB(bits);
             bits &= bits-1u;
-            LocalLight lamp = lighting.lamps[word*32 + bit];
+            int lightIndex = word*32 + bit;
+            LocalLight lamp = lighting.lamps[lightIndex];
             vec3 offset = lamp.positionRadius.xyz-worldPosition;
             float distance2 = dot(offset,offset);
             float radius2 = lamp.positionRadius.w*lamp.positionRadius.w;
@@ -99,6 +128,9 @@ void main() {
             float cone = 1.0-distance2/radius2;
             float facing = max(dot(n,offset*inversesqrt(max(distance2,0.0001))),0.0);
             vec3 radiance = lamp.colorPower.rgb*(lamp.colorPower.w*cone*cone/(1.0+distance2));
+            if (uint(lightIndex)==lighting.shadowOptions.z && facing>0.0) {
+                radiance *= sampleShadow(3+pointFace(-offset),worldPosition,0.0014);
+            }
             if (material) result += materialLight(n,v,offset*inversesqrt(max(distance2,0.0001)),radiance);
             else result += tint.rgb*radiance*facing;
         }

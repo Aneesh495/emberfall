@@ -75,7 +75,7 @@ def main():
             try:
                 environment = os.environ.copy()
                 layer_library = environment.get("EMBERFALL_VALIDATION_LIB")
-                if layer_library and name in ("gpu_smoke", "render", "ui_check", "editor"):
+                if layer_library and name in ("gpu_smoke", "render", "ui_check", "editor", "shadow_fixture"):
                     environment["DYLD_LIBRARY_PATH"] = layer_library
                 result = subprocess.run(command, stdout=output, stderr=error, cwd=root, timeout=timeout, env=environment)
                 code = result.returncode
@@ -125,10 +125,11 @@ def main():
             run("physics", [binary("runtime_bench"), "physics"], stdout=logs / "physics.csv")
             if args.profile == "portability-diagnostic":
                 run("gpu_smoke", [binary("gpu_smoke"), build / "shaders", logs / "frame.ppm"])
+                run("shadow_fixture", [binary("gpu_shadow"), build / "shaders", logs / "shadow-fixture"])
                 run("render", [binary("gpu_stress"), build / "shaders"], timeout=120, stdout=logs / "render.csv")
                 run("ui_check", [binary("lantern-reach"), "--validate", "--ui-check", "--no-audio",
                                  "--profile", destination / "ui-profile", "--capture", logs / "ui.ppm"])
-                run("editor", [binary("emberfall-editor"), root / "assets/levels/01-aperture.scene",
+                run("editor", [binary("emberfall-editor"), root / "assets/levels/02-prism.scene",
                                "--validate", "--frames", "25", "--capture", logs / "editor.ppm"])
                 package = destination / "package"
                 if run("package", ["./scripts/package.sh", build, package], timeout=120):
@@ -136,7 +137,7 @@ def main():
                     if len(archives) == 1:
                         run("package_smoke", ["python3", "scripts/package_smoke.py", archives[0],
                                               destination / "replays", logs / "ending.ppm"], timeout=150)
-        required_count = 16 if args.profile == "portability-diagnostic" else 10
+        required_count = 17 if args.profile == "portability-diagnostic" else 10
         status = "recorded" if cooked and len(commands) == required_count and all(
             row["exit"] == 0 for row in commands
         ) else "failed"

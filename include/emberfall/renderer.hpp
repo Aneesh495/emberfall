@@ -15,6 +15,7 @@ struct View {
     bool antialias{true};
     bool dense_mesh{};
     float far_plane{160};
+    bool local_shadows{true};
 };
 
 struct OverlayVertex {
@@ -32,6 +33,7 @@ struct FrameReport {
     double timestamp_period_ns{};
     unsigned timestamp_valid_bits{};
     std::uint32_t imported_triangles{}, light_tiles{}, tile_light_entries{};
+    std::uint32_t shadow_maps{}, shadow_draws{};
 };
 
 class Renderer {

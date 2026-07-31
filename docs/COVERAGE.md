@@ -17,7 +17,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E11 | Explicit image access, layouts, timeline ownership and slot reuse. Transient aliasing and integrated graph inspection remain. [Render graph](../src/gpu/render_graph.hpp) |
 | E12 | CPU frustum tests, instance batching and separate shadow culling. Occlusion and runtime LOD remain. [Visibility](../src/gpu/pipeline.cpp) |
 | E13 | Linear HDR color, filmic display and sRGB output. Metallic/roughness, image-based lighting and normal-mapped assets remain. [Display shader](../shaders/tonemap.frag) |
-| E14 | One directional depth map and CPU-built forward light tiles. Cascades and local shadows remain. [Lighting shader](../shaders/scene.frag) |
+| E14 | Three directional cascades and one six-face point shadow fit a shared atlas. CPU-built forward light tiles bound fragment work. Depth clustering and multi-light shadow allocation remain. [Lighting shader](../shaders/scene.frag) |
 | E15 | HDR, exposure and a spatial edge filter. Motion vectors and temporal history remain. [Display shader](../shaders/tonemap.frag) |
 | E16 | Distance fog and editor gizmo geometry. Particles, decals and bounded translucent scene rendering remain. [Lighting shader](../shaders/scene.frag) |
 | E17 | Device identity, shader load validation, raw GPU timestamps and framebuffer readback. Integrated pass and resource inspection remain. [Frame recorder](../src/gpu/frame.cpp) |

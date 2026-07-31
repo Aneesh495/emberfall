@@ -36,7 +36,8 @@ void Renderer::State::wait(std::uint64_t value) const {
     check(vkWaitSemaphores(device,&info,5'000'000'000ULL),"Wait for frame completion timeline");
 }
 
-void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera, const Mat4& light, std::uint32_t count, std::uint32_t shadow_count,
+void Renderer::State::record(Frame& frame, Screen& screen, const View& view, const Mat4& camera,
+                             std::uint32_t count,std::span<const ShadowDraw> shadows,
                              std::uint32_t overlay_count,std::span<const SkinDraw> meshes) {
     const auto cmd = frame.commands;
     auto begin = vk<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
@@ -80,10 +81,9 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,0};
     const gpu::RenderGraph graph(cmd);
     graph.pass({{shadow,gpu::ImageUse::depth_output}},[&] {
-        const VkRect2D area{{0,0},{shadow_size,shadow_size}};
-        const VkViewport shadow_view{0,0,shadow_size,shadow_size,0,1};
-        vkCmdSetViewport(cmd,0,1,&shadow_view);
-        vkCmdSetScissor(cmd,0,1,&area);
+        constexpr auto tile = ShadowViews::tile_pixels;
+        constexpr auto columns = ShadowViews::atlas_columns;
+        const VkRect2D atlas{{0,0},{ShadowViews::atlas_pixels,ShadowViews::atlas_pixels}};
         auto depth_attachment = vk<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
         depth_attachment.imageView = frame.shadow.view;
         depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -91,17 +91,25 @@ void Renderer::State::record(Frame& frame, Screen& screen, const View& view, con
         depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth_attachment.clearValue.depthStencil.depth = 1;
         auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
-        rendering.renderArea = area;
+        rendering.renderArea = atlas;
         rendering.layerCount = 1;
         rendering.pDepthAttachment = &depth_attachment;
         vkCmdBeginRendering(cmd,&rendering);
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shadow_pipeline);
-        const std::array buffers{geometry.buffer,frame.instances.buffer};
-        const std::array<VkDeviceSize,2> offsets{mesh_offset,instance_limit*sizeof(RenderItem)};
-        vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(buffers.size()),buffers.data(),offsets.data());
-        vkCmdPushConstants(cmd,shadow_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(light),&light);
-        if (shadow_count) vkCmdDraw(cmd,vertices,shadow_count,0,0);
-        draw_skin();
+        for (std::uint32_t i=0; i<shadows.size(); ++i) {
+            const auto& draw = shadows[i];
+            const auto x = (i%columns)*tile, y = (i/columns)*tile;
+            const VkRect2D area{{static_cast<int>(x),static_cast<int>(y)},{tile,tile}};
+            const VkViewport shadow_view{static_cast<float>(x),static_cast<float>(y),tile,tile,0,1};
+            vkCmdSetViewport(cmd,0,1,&shadow_view);
+            vkCmdSetScissor(cmd,0,1,&area);
+            const std::array buffers{geometry.buffer,frame.instances.buffer};
+            const std::array<VkDeviceSize,2> offsets{mesh_offset,draw.first*sizeof(RenderItem)};
+            vkCmdBindVertexBuffers(cmd,0,static_cast<std::uint32_t>(buffers.size()),buffers.data(),offsets.data());
+            vkCmdPushConstants(cmd,shadow_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(draw.projection),&draw.projection);
+            if (draw.count) vkCmdDraw(cmd,vertices,draw.count,0,0);
+            draw_skin();
+        }
         vkCmdEndRendering(cmd);
     });
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,1);
@@ -196,7 +204,7 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     std::array<std::uint64_t,4> stamps{};
     if (timed_serial && frame.timer) {
         check(vkGetQueryPoolResults(device,frame.timer,0,4,sizeof(stamps),stamps.data(),sizeof(stamps[0]),
-                                    VK_QUERY_RESULT_64_BIT),"Read completed GPU pass timestamps");
+                                    VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT),"Read completed GPU pass timestamps");
         const auto mask = timestamp_bits == 64 ? std::numeric_limits<std::uint64_t>::max() : (1ULL<<timestamp_bits)-1;
         elapsed = static_cast<double>((stamps[3]-stamps[0]) & mask)*properties.limits.timestampPeriod*1e-6;
     }
@@ -211,14 +219,43 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     auto& screen = screens.at(index);
     check(vkResetCommandPool(device,frame.pool,0),"Reset frame command pool");
     const auto aspect = static_cast<float>(extent.width)/static_cast<float>(extent.height);
-    const auto camera = perspective(view.fov,aspect,0.1f,view.far_plane)*look_at(view.eye,view.target,{0,1,0});
+    const Vec3 up{0,1,0};
+    const auto forward = unit(view.target-view.eye);
+    const auto camera = perspective(view.fov,aspect,0.1f,view.far_plane)*look_at(view.eye,view.target,up);
     const Vec3 direction = unit(Vec3{-0.45f,0.82f,0.24f});
-    const Vec3 anchor{std::round(view.target.x*32)/32,0,std::round(view.target.z*32)/32};
-    const auto light = orthographic(18,18,0.5f,85)*look_at(anchor+direction*32,anchor,{0,1,0});
+
+    Lighting lighting{};
+    std::array<LightSphere,light_limit> spheres{};
+    std::size_t lamps = 0, local = light_limit, emitter = items.size();
+    float nearest = std::numeric_limits<float>::infinity();
+    for (std::size_t i=0; i<items.size() && lamps<light_limit; ++i) {
+        const auto& item = items[i];
+        if (item.emission<=0.6f) continue;
+        const auto p = transform_point(item.model,{})+Vec3{0,0.2f,0};
+        spheres[lamps] = {p,3.4f};
+        const auto offset = p-view.target;
+        const auto squared = dot(offset,offset);
+        if (view.local_shadows && squared<nearest) {
+            nearest = squared;
+            local = lamps;
+            emitter = i;
+        }
+        lighting.lights[lamps++] = {{p.x,p.y,p.z,3.4f},
+            {item.color.x,item.color.y,item.color.z,std::min(item.emission,4.0f)*1.3f}};
+    }
+    const auto shadow = shadow_views({view.eye,forward,up,view.fov,aspect,0.1f,view.far_plane},direction,
+                                    local<lamps ? std::optional{spheres[local]} : std::nullopt);
     const auto mark = [&](std::size_t start,std::size_t end) {
         for (std::size_t i=start; i<end; ++i) {
-            visibility[i] = static_cast<std::uint8_t>((gpu::visible(camera,items[i].model) ? 1U : 0U) |
-                (gpu::visible(light,items[i].model) ? 2U : 0U));
+            const auto& model = items[i].model;
+            std::uint16_t mask = gpu::visible(camera,model) ? 1 : 0;
+            for (std::size_t map=0; map<shadow.count; ++map) {
+                if (map>=ShadowViews::cascade_count && i==emitter) continue;
+                if (gpu::visible(shadow.projections[map],model)) {
+                    mask = static_cast<std::uint16_t>(mask | (1U<<(map+1)));
+                }
+            }
+            visibility[i] = mask;
         }
     };
     if (items.size() < 1024) mark(0,items.size());
@@ -231,34 +268,37 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         }
         culling.run(Schedule(std::move(tasks)));
     }
-    std::uint32_t count = 0, shadow_count = 0;
-    Lighting lighting{light,{direction.x,direction.y,direction.z,0},{},{}};
-    std::array<LightSphere,light_limit> spheres{};
-    std::size_t lamps = 0;
     auto* upload = static_cast<std::byte*>(frame.instances.mapped);
-    for (std::size_t i=0; i<items.size(); ++i) {
-        const auto& item = items[i];
-        if (visibility[i] & 1U) {
-            std::memcpy(upload+count*sizeof(item),&item,sizeof(item));
+    const auto upload_marked = [&](unsigned bit,std::uint32_t first,std::uint32_t budget) {
+        std::uint32_t count = 0;
+        for (std::size_t i=0; i<items.size(); ++i) {
+            if (!(visibility[i] & (1U<<bit))) continue;
+            if (count==budget) throw std::runtime_error("Frame shadow instance budget exceeded");
+            std::memcpy(upload+(first+count)*sizeof(RenderItem),&items[i],sizeof(RenderItem));
             ++count;
         }
-        if (visibility[i] & 2U) {
-            std::memcpy(upload+(instance_limit+shadow_count)*sizeof(item),&item,sizeof(item));
-            ++shadow_count;
-        }
-        if (item.emission > 0.6f && lamps < light_limit) {
-            const auto p = transform_point(item.model,{});
-            spheres[lamps] = {{p.x,p.y+0.2f,p.z},3.4f};
-            lighting.lights[lamps++] = {{p.x,p.y+0.2f,p.z,3.4f},
-                {item.color.x,item.color.y,item.color.z,std::min(item.emission,4.0f)*1.3f}};
-        }
+        return count;
+    };
+    const auto count = upload_marked(0,0,instance_limit);
+    std::array<ShadowDraw,ShadowViews::limit> shadow_draws{};
+    std::uint32_t shadow_count = 0, nonempty_shadows = 0;
+    for (std::uint32_t i=0; i<shadow.count; ++i) {
+        const auto first = instance_limit+shadow_count;
+        const auto amount = upload_marked(i+1,first,shadow_instance_limit-shadow_count);
+        shadow_draws[i] = {shadow.projections[i],first,amount};
+        shadow_count += amount;
+        nonempty_shadows += amount>0 ? 1U : 0U;
     }
-    lighting.direction_count[3] = static_cast<float>(lamps);
+    lighting.shadow = shadow.projections;
+    lighting.camera_forward = {forward.x,forward.y,forward.z,0.1f};
+    lighting.cascade_ends = {shadow.cascade_ends[0],shadow.cascade_ends[1],shadow.cascade_ends[2],0};
+    lighting.direction_count = {direction.x,direction.y,direction.z,static_cast<float>(lamps)};
+    lighting.shadow_options = {ShadowViews::atlas_columns,ShadowViews::tile_pixels,static_cast<std::uint32_t>(local),0};
     tile_lights.build(camera,extent.width,extent.height,std::span(spheres).first(lamps));
     lighting.tile_grid = {tile_lights.columns(),tile_lights.rows(),TileLights::tile_size,0};
     const auto masks = tile_lights.masks();
     std::memcpy(frame.light_tiles.mapped,masks.data(),masks.size_bytes());
-    static_assert(sizeof(Lighting) == 96+32*light_limit);
+    static_assert(sizeof(Lighting) == 64*ShadowViews::limit+80+32*light_limit);
     std::memcpy(frame.lighting.mapped,&lighting,sizeof(lighting));
     if (!overlay.empty()) std::memcpy(frame.overlay.mapped,overlay.data(),overlay.size_bytes());
     std::array<SkinDraw,uploaded_mesh_limit> skin_draws{};
@@ -291,7 +331,7 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
             upload_mesh(primitive.vertices,{mesh.model,color,0,{m.emissive.x,m.emissive.y,m.emissive.z,m.roughness},m.metallic});
         }
     }
-    record(frame,screen,view,camera,light,count,shadow_count,static_cast<std::uint32_t>(overlay.size()),
+    record(frame,screen,view,camera,count,std::span(shadow_draws).first(shadow.count),static_cast<std::uint32_t>(overlay.size()),
            std::span(skin_draws).first(uploaded_draws));
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
@@ -331,12 +371,12 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         save_capture();
     }
     const auto triangles = count*(view.dense_mesh ? 192U : 12U)+uploaded_vertices/3;
-    const unsigned draws = 1 + static_cast<unsigned>(count>0) + static_cast<unsigned>(shadow_count>0) +
-                           static_cast<unsigned>(!overlay.empty())+2*static_cast<unsigned>(uploaded_draws);
+    const unsigned draws = 1 + static_cast<unsigned>(count>0) + nonempty_shadows + static_cast<unsigned>(!overlay.empty()) +
+                           static_cast<unsigned>(shadow.count+1)*static_cast<unsigned>(uploaded_draws);
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
               properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3,
-              static_cast<std::uint32_t>(masks.size()),tile_lights.entries()};
+              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows};
     return true;
 }
 
