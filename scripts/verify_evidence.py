@@ -90,17 +90,19 @@ def verify_render(raw):
         values = tuple(int(row[key]) for key in ("width", "height", "submitted", "culled", "triangles", "casters", "lights", "draw_calls"))
         width, height, submitted, culled, triangles, casters, lights, draws = values
         check((width, height, submitted, culled, triangles, lights) ==
-              (1920, 1080, 10500, 0, 2016000, 128) and casters > 0, "Missing render workload")
+              (1920, 1080, 10500, 0, 2016016, 128) and casters > 0, "Missing render workload")
         shadow_maps, shadow_draws = int(row["shadow_maps"]), int(row["shadow_draws"])
-        check(shadow_maps == 9 and 3 <= shadow_draws <= 9 and draws == shadow_draws+2,
+        check(shadow_maps == 9 and 3 <= shadow_draws <= 9 and draws == shadow_draws+23,
               "Directional or point shadow atlas workload incomplete")
+        check(int(row["motion_items"]) == submitted and int(row["animated_triangles"]) == 16,
+              "Missing temporal or skinned workload")
         light_tiles, entries = int(row["light_tiles"]), int(row["tile_light_entries"])
         check(light_tiles == ((width+31)//32)*((height+31)//32) and
               0 < entries < light_tiles*lights, "Invalid forward light tile counters")
         bits = int(row["timestamp_bits"])
         period = float(row["period_ns"])
         check(16 <= bits <= 64 and 0 < period < 1000, "Invalid hardware timestamp scale")
-        ticks = [int(row[key]) for key in ("start", "shadow", "opaque", "display")]
+        ticks = [int(row[key]) for key in ("start", "shadow", "opaque", "temporal", "display")]
         mask = (1 << bits) - 1
         segments = [((right-left) & mask)*period/1e6 for left, right in zip(ticks, ticks[1:])]
         check(all(0 < length < 1000 for length in segments), "Missing GPU pass timing")
@@ -115,10 +117,28 @@ def verify_render(raw):
                         (raw / "shadow_fixture.out").read_text())
     check(fixture is not None and int(fixture[1])>=200 and abs(int(fixture[2]))<=35,
           "Point shadow color witness outside bounds")
+    verify_temporal(raw)
     return {
         "render_gpu_p50_ms": percentile(timings, 0.5), "render_gpu_p99_ms": percentile(timings, 0.99),
         "render_host_p50_ms": percentile(host, 0.5), "render_host_p99_ms": percentile(host, 0.99)
     }
+
+
+def verify_temporal(raw):
+    def pixels(name, width=640, height=420):
+        data = (raw / "temporal-fixture" / (name + ".ppm")).read_bytes()
+        prefix = f"P6\n{width} {height}\n255\n".encode()
+        check(data.startswith(prefix) and len(data) == len(prefix)+width*height*3,
+              "Temporal readback extent mismatch")
+        return data[len(prefix):]
+
+    cold = pixels("cold")
+    warm = pixels("warm")
+    check(sum(1 for i in range(0, len(cold), 3) if cold[i:i+3] != warm[i:i+3]) >= 20,
+          "Temporal accumulation missing from readback")
+    check(pixels("cut") == pixels("reset"), "Camera cut reused invalid history")
+    pixels("resize", 700, 470)
+    check("validation_errors=0" in (raw / "temporal_fixture.out").read_text(), "Temporal validation incomplete")
 
 
 def verify_package(bundle):
@@ -187,7 +207,7 @@ def verify(bundle, source, tool):
     commands = [json.loads(line) for line in (bundle / "COMMANDS.jsonl").read_text().splitlines()]
     names = ["doctor", "build", "cook", "ctest", "world", "scheduler", "solo", "network", "ecs", "physics"]
     if profile == "portability-diagnostic":
-        names += ["gpu_smoke", "shadow_fixture", "render", "ui_check", "editor", "package", "package_smoke"]
+        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "render", "ui_check", "editor", "package", "package_smoke"]
     check([row["name"] for row in commands] == names and all(
         row["exit"] == 0 and 0 <= row["wall_seconds"] < row["timeout_seconds"] for row in commands
     ), "Required command failed or missing")

@@ -70,7 +70,11 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     const bool shadow = kind == Pipeline::shadow;
     Module vertex(device,dir / (shadow ? "shadow.vert.spv" : scene ? "scene.vert.spv" : overlay ? "overlay.vert.spv" : "screen.vert.spv"));
     std::unique_ptr<Module> fragment;
-    if (!shadow) fragment = std::make_unique<Module>(device,dir / (scene ? "scene.frag.spv" : overlay ? "overlay.frag.spv" : "tonemap.frag.spv"));
+    if (!shadow) {
+        const bool temporal = kind == Pipeline::temporal;
+        fragment = std::make_unique<Module>(device,dir / (scene ? "scene.frag.spv" : overlay ?
+            "overlay.frag.spv" : temporal ? "temporal.frag.spv" : "tonemap.frag.spv"));
+    }
     std::array stages{
         vk<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO),
         vk<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
@@ -81,10 +85,11 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     stages[1].module = fragment ? fragment->module : nullptr;
     for (auto& stage : stages) stage.pName = "main";
 
-    const std::array<VkVertexInputBindingDescription,2> bindings{{
-        {0,sizeof(Vertex),VK_VERTEX_INPUT_RATE_VERTEX}, {1,sizeof(RenderItem),VK_VERTEX_INPUT_RATE_INSTANCE}
+    const std::array<VkVertexInputBindingDescription,3> bindings{{
+        {0,sizeof(Vertex),VK_VERTEX_INPUT_RATE_VERTEX}, {1,sizeof(RenderItem),VK_VERTEX_INPUT_RATE_INSTANCE},
+        {2,sizeof(Mat4)+sizeof(float),VK_VERTEX_INPUT_RATE_INSTANCE}
     }};
-    const std::array<VkVertexInputAttributeDescription,9> attributes{{
+    const std::array<VkVertexInputAttributeDescription,14> attributes{{
         {0,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,position)},
         {1,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,normal)},
         {2,1,VK_FORMAT_R32G32B32A32_SFLOAT,0},
@@ -93,7 +98,12 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
         {5,1,VK_FORMAT_R32G32B32A32_SFLOAT,48},
         {6,1,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderItem,color)},
         {7,1,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderItem,surface)},
-        {8,1,VK_FORMAT_R32_SFLOAT,offsetof(RenderItem,metallic)}
+        {8,1,VK_FORMAT_R32_SFLOAT,offsetof(RenderItem,metallic)},
+        {9,2,VK_FORMAT_R32G32B32A32_SFLOAT,0},
+        {10,2,VK_FORMAT_R32G32B32A32_SFLOAT,16},
+        {11,2,VK_FORMAT_R32G32B32A32_SFLOAT,32},
+        {12,2,VK_FORMAT_R32G32B32A32_SFLOAT,48},
+        {13,2,VK_FORMAT_R32_SFLOAT,sizeof(Mat4)}
     }};
     const std::array shadow_attributes{attributes[0],attributes[2],attributes[3],attributes[4],attributes[5]};
     static_assert(offsetof(RenderItem,emission) == offsetof(RenderItem,color)+12);
@@ -104,7 +114,7 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     }};
     auto input = vk<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
     if (scene || shadow) {
-        input.vertexBindingDescriptionCount = static_cast<std::uint32_t>(bindings.size());
+        input.vertexBindingDescriptionCount = shadow ? 2U : static_cast<std::uint32_t>(bindings.size());
         input.pVertexBindingDescriptions = bindings.data();
         input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(shadow ? shadow_attributes.size() : attributes.size());
         input.pVertexAttributeDescriptions = shadow ? shadow_attributes.data() : attributes.data();
@@ -146,15 +156,17 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
         attachment.alphaBlendOp = VK_BLEND_OP_ADD;
     }
     auto blend = vk<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
-    blend.attachmentCount = shadow ? 0U : 1U;
-    blend.pAttachments = &attachment;
+    const std::array attachments{attachment,attachment};
+    blend.attachmentCount = shadow ? 0U : scene ? 2U : 1U;
+    blend.pAttachments = attachments.data();
     const std::array states{VK_DYNAMIC_STATE_VIEWPORT,VK_DYNAMIC_STATE_SCISSOR};
     auto dynamic = vk<VkPipelineDynamicStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO);
     dynamic.dynamicStateCount = static_cast<std::uint32_t>(states.size());
     dynamic.pDynamicStates = states.data();
     auto rendering = vk<VkPipelineRenderingCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO);
-    rendering.colorAttachmentCount = shadow ? 0U : 1U;
-    rendering.pColorAttachmentFormats = &color;
+    const std::array formats{color,color};
+    rendering.colorAttachmentCount = blend.attachmentCount;
+    rendering.pColorAttachmentFormats = formats.data();
     rendering.depthAttachmentFormat = depth;
     auto info = vk<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
     info.pNext = &rendering;

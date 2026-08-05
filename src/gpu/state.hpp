@@ -7,6 +7,7 @@
 #include "emberfall/shadow.hpp"
 
 #include <atomic>
+#include <unordered_map>
 
 namespace ember {
 
@@ -23,9 +24,11 @@ struct Renderer::State {
         std::array<float,4> color_power;
     };
     struct Lighting {
+        Mat4 previous_camera;
         std::array<Mat4,ShadowViews::limit> shadow;
         std::array<float,4> camera_forward, cascade_ends, direction_count;
         std::array<std::uint32_t,4> tile_grid, shadow_options;
+        std::array<float,4> viewport;
         std::array<Light,light_limit> lights{};
     };
     struct Image {
@@ -38,6 +41,10 @@ struct Renderer::State {
         VkDeviceMemory memory{};
         void* mapped{};
     };
+    struct Motion {
+        Mat4 model;
+        float valid{};
+    };
     struct Frame {
         VkCommandPool pool{};
         VkCommandBuffer commands{};
@@ -45,9 +52,10 @@ struct Renderer::State {
         std::uint64_t finished{};
         VkQueryPool timer{};
         Buffer instances, overlay, lighting, skin, skin_instances, light_tiles;
-        Image hdr, depth, shadow;
-        VkDescriptorSet sample{}, light_set{};
-        bool attachments_written{}, shadow_written{};
+        Buffer motions, mesh_motions;
+        Image hdr, depth, shadow, motion, history;
+        VkDescriptorSet sample{}, history_sample{}, resolve_set{}, resolve_first_set{}, light_set{};
+        bool attachments_written{}, shadow_written{}, history_written{}, motion_sampled{};
     };
     struct Screen {
         VkImage image{};
@@ -71,7 +79,8 @@ struct Renderer::State {
     static constexpr auto uploaded_mesh_limit = skin_mesh_limit+MeshLibrary::primitive_limit;
     struct SkinDraw { std::uint32_t first{}, count{}; };
     struct ShadowDraw { Mat4 projection; std::uint32_t first{}, count{}; };
-    void record(Frame& frame, Screen& screen, const View& view, const Mat4& camera,std::uint32_t count,
+    void record(Frame& frame, const Frame& previous, Screen& screen, const View& view, const Mat4& camera,
+                bool temporal, bool history, std::uint32_t count,
                 std::span<const ShadowDraw> shadows,std::uint32_t overlay_count,std::span<const SkinDraw> meshes);
     void save_capture();
     void wait(std::uint64_t serial) const;
@@ -100,9 +109,9 @@ struct Renderer::State {
     std::array<Frame,slots> frames;
     VkSemaphore timeline{};
     VkDescriptorPool descriptors{};
-    VkDescriptorSetLayout sample_layout{}, light_layout{};
-    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{}, shadow_layout{};
-    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{};
+    VkDescriptorSetLayout sample_layout{}, light_layout{}, resolve_layout{};
+    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{}, shadow_layout{}, temporal_layout{};
+    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{}, temporal_pipeline{};
     VkSampler sampler{}, shadow_sampler{};
     Scheduler culling{4};
     TileLights tile_lights;
@@ -113,6 +122,12 @@ struct Renderer::State {
     std::uint64_t serial{};
     bool dirty{true};
     bool loaded{};
+    std::unordered_map<std::uint64_t,Mat4> previous_models, next_models;
+    Mat4 previous_camera;
+    View previous_view{};
+    Vec3 previous_forward{};
+    std::uint32_t jitter_index{};
+    bool history_active{};
     FrameReport report{};
     std::atomic<unsigned> errors{};
 };

@@ -200,6 +200,7 @@ void Application::load(Progress progress) {
     }
     if (recording_ && !recording_->ticks.empty()) save_tape();
     world_ = campaign_.load(progress);
+    renderer_.reset_history();
     progress_ = progress;
     if (!options_.record.empty() && !recording_done_) recording_ = Replay{campaign_.revision(),progress,{}};
     screen_ = Screen::playing;
@@ -642,7 +643,9 @@ int Application::run() {
         const auto alpha = std::clamp(static_cast<float>(accumulator_/Game::timestep),0.0f,1.0f);
         const auto items = world_->extract(alpha,remote);
         const auto animation = world_->skin(alpha,remote);
-        if (renderer_.draw(items,{eye_,focus_,0.88f,settings_.exposure,settings_.antialias},canvas.vertices(),animation,world_->imported_meshes())) {
+        View view{eye_,focus_,0.88f,settings_.exposure,settings_.antialias};
+        view.temporal = true;
+        if (renderer_.draw(items,view,canvas.vertices(),animation,world_->imported_meshes())) {
             ++drawn;
             if ((options_.frames && drawn == options_.frames) || script_done_) break;
         } else SDL_Delay(10);

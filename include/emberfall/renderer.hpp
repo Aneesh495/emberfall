@@ -16,6 +16,7 @@ struct View {
     bool dense_mesh{};
     float far_plane{160};
     bool local_shadows{true};
+    bool temporal{};
 };
 
 struct OverlayVertex {
@@ -29,11 +30,13 @@ struct FrameReport {
     std::uint64_t serial{};
     std::uint32_t shadow_casters{}, lights{}, triangles{}, draw_calls{};
     std::uint64_t timed_serial{};
-    std::array<std::uint64_t,4> timestamps{};
+    std::array<std::uint64_t,5> timestamps{};
     double timestamp_period_ns{};
     unsigned timestamp_valid_bits{};
     std::uint32_t imported_triangles{}, light_tiles{}, tile_light_entries{};
     std::uint32_t shadow_maps{}, shadow_draws{};
+    std::uint32_t motion_items{}, animated_triangles{};
+    bool history_used{};
 };
 
 class Renderer {
@@ -43,6 +46,7 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     void resize();
+    void reset_history();
     bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay = {},
               std::span<const SkinBatch> meshes = {}, std::span<const MeshInstance> imported = {});
     void capture_next(std::filesystem::path file);

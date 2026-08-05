@@ -61,7 +61,7 @@ Game::Game(const Scene& scene, bool allow_incomplete, std::shared_ptr<const Mesh
         const auto matrix = transforms.at(id);
         if (assets_ && !node.mesh.empty()) {
             if (const auto* asset = assets_->find(node.mesh)) {
-                imported_.push_back({asset,matrix,node.color});
+                imported_.push_back({asset,matrix,node.color,static_cast<std::uint64_t>(id)*16});
                 imported_nodes_.emplace(id,asset);
             }
         }
@@ -291,8 +291,12 @@ std::vector<RenderItem> Game::extract(float alpha, std::optional<Vec3> remote_fi
     output.reserve(world_.size()+20);
     world_.each<Instance,BodyPose,Mechanism>([&](Entity, const Instance& n, const BodyPose& pose, const Mechanism& s) {
         const auto position = lerp(pose.previous,pose.position,std::clamp(alpha,0.0f,1.0f));
+        const auto id = static_cast<std::uint64_t>(n.id)*16;
         if (n.kind == Kind::decor) {
-            if (!imported_nodes_.contains(n.id)) output.push_back({n.authored,n.color,n.parameter});
+            if (!imported_nodes_.contains(n.id)) {
+                output.push_back({n.authored,n.color,n.parameter});
+                output.back().history_id = id;
+            }
             return;
         }
         float emission = 0;
@@ -306,16 +310,22 @@ std::vector<RenderItem> Game::extract(float alpha, std::optional<Vec3> remote_fi
         // Keep the ferry deck surface separate from the dock when the two supports overlap.
         if (n.kind == Kind::platform) visual_size.y *= 0.94f;
         append_box(output,position,visual_size,color,pose.yaw,emission);
+        output.back().history_id = id;
         if (n.kind == Kind::mirror) {
             const float distance = powered(n.link) ? planar_distance(position,location(n.link)) : 1.2f;
             const Vec3 direction{std::sin(pose.yaw),0,-std::cos(pose.yaw)};
             append_box(output,position+direction*(distance*0.5f),{0.075f,0.075f,distance},{1,0.55f,0.14f},-pose.yaw,3.1f);
+            output.back().history_id = id+1;
         }
     });
     for (std::size_t i=0; i<players_.size(); ++i) {
         const auto& pose = *world_.get<BodyPose>(players_[i]);
         const auto position = i == 0 && remote_first ? *remote_first : lerp(pose.previous,pose.position,alpha);
+        const auto first = output.size();
         add_player(output,player(i),position,i == 0 ? Vec3{0.95f,0.43f,0.10f} : Vec3{0.10f,0.74f,0.83f});
+        for (auto part=first; part<output.size(); ++part) {
+            output[part].history_id = (std::uint64_t{1}<<63)+i*16+part-first;
+        }
     }
     return output;
 }

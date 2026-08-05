@@ -19,6 +19,7 @@ struct RenderItem {
     float emission{};
     std::array<float,4> surface{0,0,0,-1};
     float metallic{};
+    std::uint64_t history_id{};
 };
 
 struct BodyPose {

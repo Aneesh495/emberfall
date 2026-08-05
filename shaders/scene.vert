@@ -5,12 +5,19 @@ layout(location=2) in mat4 instanceModel;
 layout(location=6) in vec4 instanceTint;
 layout(location=7) in vec4 instanceSurface;
 layout(location=8) in float instanceMetallic;
+layout(location=9) in mat4 instancePrevious;
+layout(location=13) in float instanceHistory;
 
 layout(location=0) out vec3 normal;
 layout(location=1) out vec3 worldPosition;
 layout(location=2) out vec4 tint;
 layout(location=3) flat out vec4 surfaceData;
 layout(location=4) flat out float metallic;
+layout(location=5) out vec4 previousClip;
+layout(location=6) flat out float historyValid;
+layout(std140,set=0,binding=0) uniform Lighting {
+    mat4 previousCamera;
+} lighting;
 
 layout(push_constant) uniform SceneCamera {
     mat4 viewProjection;
@@ -25,4 +32,7 @@ void main() {
     surfaceData = instanceSurface;
     metallic = instanceMetallic;
     gl_Position = camera.viewProjection * world;
+    historyValid = instanceHistory;
+    previousClip = instanceHistory > 0.0
+        ? lighting.previousCamera * instancePrevious * vec4(inPosition,1.0) : vec4(0.0);
 }

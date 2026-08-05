@@ -4,7 +4,10 @@ layout(location=1) in vec3 worldPosition;
 layout(location=2) in vec4 tint;
 layout(location=3) flat in vec4 surfaceData;
 layout(location=4) flat in float metallic;
+layout(location=5) in vec4 previousClip;
+layout(location=6) flat in float historyValid;
 layout(location=0) out vec4 hdr;
+layout(location=1) out vec4 motion;
 
 layout(push_constant) uniform SceneCamera {
     mat4 viewProjection;
@@ -16,12 +19,14 @@ struct LocalLight {
     vec4 colorPower;
 };
 layout(std140,set=0,binding=0) uniform Lighting {
+    mat4 previousCamera;
     mat4 shadowProjection[9];
     vec4 cameraForward;
     vec4 cascadeEnds;
     vec4 directionCount;
     uvec4 tileGrid;
     uvec4 shadowOptions;
+    vec4 viewport;
     LocalLight lamps[128];
 } lighting;
 layout(set=0,binding=1) uniform sampler2D shadowDepth;
@@ -138,4 +143,9 @@ void main() {
     result += tint.rgb*tint.a;
     float fog = 1.0-exp(-length(camera.eye.xyz-worldPosition)*0.021);
     hdr = vec4(mix(result,vec3(0.042,0.067,0.11),fog*0.72),1.0);
+    motion = vec4(0.0,0.0,0.0,1.0/gl_FragCoord.w);
+    if (historyValid > 0.0 && previousClip.w > 0.1) {
+        vec2 previousUv = previousClip.xy/previousClip.w*0.5+0.5;
+        motion.xyz = vec3(gl_FragCoord.xy*lighting.viewport.xy-previousUv,previousClip.w);
+    }
 }

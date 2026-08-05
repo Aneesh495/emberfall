@@ -3,14 +3,19 @@ digraph Emberfall {
   node [shape=box, style="rounded,filled", fillcolor="#e7f4f3", color="#317775", fontname="Helvetica", fontsize=12, margin="0.18,0.11"];
   edge [color="#5f737e", fontname="Helvetica", fontsize=10];
 
- depth [label="Directional depth write"]
- scene [label="Opaque HDR and scene depth"]
- map [label="Exposure and edge filter"]
+ depth [label="Directional and point shadow atlas"]
+ scene [label="Opaque HDR, motion and depth"]
+ history [label="Previous slot history"]
+ temporal [label="Depth-tested temporal resolve"]
+ map [label="Exposure and filmic curve"]
  ui [label="Blend overlay"]
  read [label="Optional framebuffer copy"]
  present [label="Present"]
  depth -> scene [label="sample depth"]
- scene -> map [label="sample HDR"]
+ scene -> temporal [label="HDR + motion"]
+ history -> temporal [label="prior HDR + depth"]
+ temporal -> map [label="sample resolved HDR"]
+ scene -> map [label="direct HDR when disabled", style=dashed]
  map -> ui -> present
  ui -> read -> present
  }

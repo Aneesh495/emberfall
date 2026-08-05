@@ -52,6 +52,11 @@ def erased_shadow(bundle):
     change_csv(bundle / "raw/render.csv", lambda rows: rows[0].update(shadow=rows[0]["start"]))
 
 
+def erased_history(bundle):
+    fixture = bundle / "raw" / "temporal-fixture"
+    shutil.copyfile(fixture / "cold.ppm", fixture / "warm.ppm")
+
+
 def wrong_source(bundle):
     for name in ("SOURCE_INPUTS.json", "ACCEPTANCE.json"):
         target = bundle / name
@@ -79,6 +84,7 @@ def main():
         controls += [
             ("false_timing", inaccurate_gpu, True, "Reported GPU time disagrees"),
             ("missing_gpu_pass", erased_shadow, True, "Missing GPU pass timing"),
+            ("missing_temporal_accumulation", erased_history, True, "Temporal accumulation missing"),
         ]
     results = []
     for name, mutate, update, expected in controls:

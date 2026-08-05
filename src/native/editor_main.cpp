@@ -181,6 +181,7 @@ void Editor::refresh_meshes() {
             }
         }
         mesh_library_ = std::move(library);
+        renderer_.reset_history();
     } catch (const std::exception& error) {
         status_ = error.what();
     }
@@ -273,6 +274,7 @@ void Editor::key(const SDL_KeyboardEvent& e) {
         if (play_) play_.reset();
         else play_ = file_.document().play(mesh_library_);
         paused_ = false;
+        renderer_.reset_history();
         status_ = play_ ? "Play world running" : "Returned to edit world";
         return;
     }
@@ -407,9 +409,10 @@ std::vector<RenderItem> Editor::extract(std::vector<MeshInstance>& imported) con
     for (const auto& [id,node] : preview.nodes) {
         const bool active = std::ranges::find(selected_,id) != selected_.end();
         if (const auto* asset = mesh_library_ ? mesh_library_->find(node.mesh) : nullptr) {
-            imported.push_back({asset,matrices.at(id),node.color*(active ? 1.45f : 1.0f)});
+            imported.push_back({asset,matrices.at(id),node.color*(active ? 1.45f : 1.0f),static_cast<std::uint64_t>(id)*16});
         } else {
             out.push_back({matrices.at(id),node.color,active ? 0.8f : node.kind == Kind::decor ? node.parameter : 0});
+            out.back().history_id = static_cast<std::uint64_t>(id)*16;
         }
     }
     if (selected_.empty()) return out;
@@ -512,7 +515,9 @@ int Editor::run() {
         const auto blocks = extract(imported);
         const auto actors = play_ ? play_->skin(1) : std::vector<SkinBatch>{};
         const auto models = play_ ? play_->imported_meshes() : std::span<const MeshInstance>(imported);
-        if (renderer_.draw(blocks,view(),canvas.vertices(),actors,models)) {
+        auto viewport = view();
+        viewport.temporal = true;
+        if (renderer_.draw(blocks,viewport,canvas.vertices(),actors,models)) {
             if (++drawn == options_.frames) break;
         } else SDL_Delay(10);
         if (options_.frames && now > deadline) throw std::runtime_error("Editor diagnostic timed out");

@@ -44,6 +44,7 @@ struct MeshInstance {
     const MeshAsset* asset{};
     Mat4 model;
     Vec3 tint{1,1,1};
+    std::uint64_t history_id{};
 };
 
 }

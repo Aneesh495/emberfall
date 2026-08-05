@@ -89,8 +89,14 @@ void Renderer::State::create_pipeline_layouts() {
     sample_info.bindingCount = 1;
     sample_info.pBindings = &binding;
     check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&sample_layout),"Create tonemap descriptor layout");
+    auto resolve_bindings = std::array{binding,binding,binding};
+    resolve_bindings[1].binding = 1;
+    resolve_bindings[2].binding = 2;
+    sample_info.bindingCount = static_cast<std::uint32_t>(resolve_bindings.size());
+    sample_info.pBindings = resolve_bindings.data();
+    check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&resolve_layout),"Create temporal descriptors");
     const std::array<VkDescriptorSetLayoutBinding,3> light_bindings{{
-        {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {2,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
     }};
@@ -109,6 +115,12 @@ void Renderer::State::create_pipeline_layouts() {
     layout.pSetLayouts = nullptr;
     layout.pPushConstantRanges = &light_camera;
     check(vkCreatePipelineLayout(device,&layout,nullptr,&shadow_layout),"Create shadow pipeline layout");
+    layout.setLayoutCount = 1;
+    layout.pSetLayouts = &resolve_layout;
+    layout.pushConstantRangeCount = 0;
+    layout.pPushConstantRanges = nullptr;
+    check(vkCreatePipelineLayout(device,&layout,nullptr,&temporal_layout),"Create temporal pipeline layout");
+    layout.pushConstantRangeCount = 1;
     const VkPushConstantRange display{VK_SHADER_STAGE_FRAGMENT_BIT,0,12};
     layout.setLayoutCount = 1;
     layout.pSetLayouts = &sample_layout;
@@ -149,10 +161,13 @@ void Renderer::State::create_frames() {
         if (timestamp_bits) {
             auto query = vk<VkQueryPoolCreateInfo>(VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO);
             query.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            query.queryCount = 4;
+            query.queryCount = 5;
             check(vkCreateQueryPool(device,&query,nullptr,&frame.timer),"Create frame timer queries");
         }
         make_buffer(frame.instances,(instance_limit+shadow_instance_limit)*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        static_assert(sizeof(Motion) == sizeof(Mat4)+sizeof(float));
+        make_buffer(frame.motions,instance_limit*sizeof(Motion),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.mesh_motions,uploaded_mesh_limit*sizeof(Motion),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.lighting,sizeof(Lighting),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
         make_buffer(frame.light_tiles,TileLights::max_tiles*sizeof(TileLights::Mask),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -174,10 +189,14 @@ void Renderer::State::clear_swapchain() {
     for (auto& frame : frames) {
         free(frame.hdr);
         free(frame.depth);
-        frame.sample = nullptr;
+        free(frame.motion);
+        free(frame.history);
+        frame.sample = frame.history_sample = frame.resolve_set = frame.resolve_first_set = nullptr;
+        frame.history_written = frame.motion_sampled = false;
         frame.light_set = nullptr;
         frame.attachments_written = false;
     }
+    history_active = false;
     for (const auto& screen : screens) {
         vkDestroySemaphore(device,screen.ready,nullptr);
         vkDestroyImageView(device,screen.view,nullptr);
@@ -253,16 +272,19 @@ bool Renderer::State::rebuild_swapchain() {
     tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::tonemap);
     overlay_pipeline = gpu::pipeline(device,shaders,overlay_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::overlay);
     const std::array<VkDescriptorPoolSize,3> pool_sizes{{
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,2*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,9*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,slots}
     }};
     auto pool = vk<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
-    pool.maxSets = 2*slots;
+    pool.maxSets = 5*slots;
     pool.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
     pool.pPoolSizes = pool_sizes.data();
     check(vkCreateDescriptorPool(device,&pool,nullptr,&descriptors),"Create frame descriptors");
+    constexpr auto color_use = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     for (auto& frame : frames) {
-        make_image(frame.hdr,hdr_format,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,VK_IMAGE_ASPECT_COLOR_BIT);
+        make_image(frame.hdr,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
+        make_image(frame.motion,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
+        make_image(frame.history,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
         make_image(frame.depth,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,VK_IMAGE_ASPECT_DEPTH_BIT);
         auto set = vk<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
         set.descriptorPool = descriptors;
@@ -275,6 +297,11 @@ bool Renderer::State::rebuild_swapchain() {
         update.descriptorCount = 1;
         update.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         update.pImageInfo = &image;
+        vkUpdateDescriptorSets(device,1,&update,0,nullptr);
+        check(vkAllocateDescriptorSets(device,&set,&frame.history_sample),"Allocate resolved HDR descriptor");
+        const VkDescriptorImageInfo history{sampler,frame.history.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        update.dstSet = frame.history_sample;
+        update.pImageInfo = &history;
         vkUpdateDescriptorSets(device,1,&update,0,nullptr);
         set.pSetLayouts = &light_layout;
         check(vkAllocateDescriptorSets(device,&set,&frame.light_set),"Allocate light descriptors");
@@ -296,6 +323,36 @@ bool Renderer::State::rebuild_swapchain() {
         grid.pBufferInfo = &tiles;
         const std::array writes{lighting,depth,grid};
         vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
+    }
+    for (std::size_t i=0; i<frames.size(); ++i) {
+        auto& frame = frames[i];
+        const auto& previous = frames[(i+slots-1)%slots];
+        auto set = vk<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
+        set.descriptorPool = descriptors;
+        set.descriptorSetCount = 1;
+        set.pSetLayouts = &resolve_layout;
+        check(vkAllocateDescriptorSets(device,&set,&frame.resolve_set),"Allocate temporal history descriptors");
+        check(vkAllocateDescriptorSets(device,&set,&frame.resolve_first_set),"Allocate first-frame descriptors");
+        const auto bind = [&](VkDescriptorSet destination,VkImageView history) {
+            const std::array<VkDescriptorImageInfo,3> images{{
+                {sampler,frame.hdr.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {sampler,frame.motion.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {sampler,history,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
+            }};
+            std::array<VkWriteDescriptorSet,3> writes{};
+            for (std::uint32_t binding=0; binding<writes.size(); ++binding) {
+                auto& write = writes[binding];
+                write = vk<VkWriteDescriptorSet>(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+                write.dstSet = destination;
+                write.dstBinding = binding;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo = &images[binding];
+            }
+            vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
+        };
+        bind(frame.resolve_set,previous.history.view);
+        bind(frame.resolve_first_set,frame.hdr.view);
     }
     dirty = false;
     return true;

@@ -74,6 +74,7 @@ void Renderer::State::init(SDL_Window* owner, std::filesystem::path path, bool v
     shadow_pipeline = gpu::pipeline(device,shaders,shadow_layout,VK_FORMAT_UNDEFINED,depth_format,gpu::Pipeline::shadow);
     visibility.resize(instance_limit);
     scene_pipeline = gpu::pipeline(device,shaders,scene_layout,hdr_format,depth_format,gpu::Pipeline::scene);
+    temporal_pipeline = gpu::pipeline(device,shaders,temporal_layout,hdr_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::temporal);
 }
 
 void Renderer::State::create_instance(bool validation) {
@@ -211,6 +212,8 @@ Renderer::State::~State() {
         clear_swapchain();
         for (auto& frame : frames) {
             free(frame.instances);
+            free(frame.motions);
+            free(frame.mesh_motions);
             free(frame.overlay);
             free(frame.lighting);
             free(frame.light_tiles);
@@ -226,12 +229,15 @@ Renderer::State::~State() {
         vkDestroySampler(device,shadow_sampler,nullptr);
         vkDestroySemaphore(device,timeline,nullptr);
         vkDestroyPipeline(device,scene_pipeline,nullptr);
+        vkDestroyPipeline(device,temporal_pipeline,nullptr);
         vkDestroyPipeline(device,shadow_pipeline,nullptr);
         vkDestroyPipelineLayout(device,scene_layout,nullptr);
+        vkDestroyPipelineLayout(device,temporal_layout,nullptr);
         vkDestroyPipelineLayout(device,shadow_layout,nullptr);
         vkDestroyPipelineLayout(device,tonemap_layout,nullptr);
         vkDestroyPipelineLayout(device,overlay_layout,nullptr);
         vkDestroyDescriptorSetLayout(device,sample_layout,nullptr);
+        vkDestroyDescriptorSetLayout(device,resolve_layout,nullptr);
         vkDestroyDescriptorSetLayout(device,light_layout,nullptr);
         vkDestroyDevice(device,nullptr);
     }

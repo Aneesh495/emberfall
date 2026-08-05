@@ -16,9 +16,9 @@ The source paths below identify the current implementation or diagnostic for eac
 | E10 | Canonical scene schema, hierarchy, prefab ID rebinding and editor round trips. Live inheritance, override migration and scene schema migrations remain. [Editor document](../src/editor.cpp) |
 | E11 | Explicit image access, layouts, timeline ownership and slot reuse. Transient aliasing and integrated graph inspection remain. [Render graph](../src/gpu/render_graph.hpp) |
 | E12 | CPU frustum tests, instance batching and separate shadow culling. Occlusion and runtime LOD remain. [Visibility](../src/gpu/pipeline.cpp) |
-| E13 | Linear HDR color, filmic display and sRGB output. Metallic/roughness, image-based lighting and normal-mapped assets remain. [Display shader](../shaders/tonemap.frag) |
+| E13 | Linear HDR color, metallic/roughness glTF factors, filmic display and sRGB output. Image-based lighting and normal-mapped assets remain. [Lighting shader](../shaders/scene.frag), [display shader](../shaders/tonemap.frag) |
 | E14 | Three directional cascades and one six-face point shadow fit a shared atlas. CPU-built forward light tiles bound fragment work. Depth clustering and multi-light shadow allocation remain. [Lighting shader](../shaders/scene.frag) |
-| E15 | HDR, exposure and a spatial edge filter. Motion vectors and temporal history remain. [Display shader](../shaders/tonemap.frag) |
+| E15 | HDR, exposure, rigid motion vectors, jitter and bounded temporal history. Camera cuts and resize have readback coverage. Skinned deformation uses current-frame samples. [Temporal study](TEMPORAL.md) |
 | E16 | Distance fog and editor gizmo geometry. Particles, decals and bounded translucent scene rendering remain. [Lighting shader](../shaders/scene.frag) |
 | E17 | Device identity, shader load validation, raw GPU timestamps and framebuffer readback. Integrated pass and resource inspection remain. [Frame recorder](../src/gpu/frame.cpp) |
 | E18 | Boxes, spheres, capsules and validated convex hulls with angular impulses. Single-witness contacts and bounded continuous sweeps. [Angular physics](ANGULAR_PHYSICS.md) |
