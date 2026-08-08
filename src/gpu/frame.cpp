@@ -229,10 +229,26 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     });
     if (!capture_file.empty()) {
         graph.pass({{backbuffer,gpu::ImageUse::transfer_read}},[&] {
+            auto barrier = vk<VkBufferMemoryBarrier2>(VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2);
+            barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.buffer = capture.buffer;
+            barrier.size = VK_WHOLE_SIZE;
+            auto dependency = vk<VkDependencyInfo>(VK_STRUCTURE_TYPE_DEPENDENCY_INFO);
+            dependency.bufferMemoryBarrierCount = 1;
+            dependency.pBufferMemoryBarriers = &barrier;
+            vkCmdPipelineBarrier2(cmd,&dependency);
             VkBufferImageCopy region{};
             region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
             region.imageExtent = {extent.width,extent.height,1};
             vkCmdCopyImageToBuffer(cmd,screen.image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,capture.buffer,1,&region);
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            vkCmdPipelineBarrier2(cmd,&dependency);
         });
     }
     graph.pass({{backbuffer,gpu::ImageUse::present}},[]{});
