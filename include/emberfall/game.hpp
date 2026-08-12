@@ -20,6 +20,8 @@ struct RenderItem {
     std::array<float,4> surface{0,0,0,-1};
     float metallic{};
     std::uint64_t history_id{};
+    std::array<std::uint32_t,3> texture_layers{};
+    float normal_scale{1};
 };
 
 struct BodyPose {

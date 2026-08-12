@@ -7,6 +7,8 @@ import math
 import re
 import struct
 
+import texture_cook
+
 
 MAX_DOCUMENT = 2_000_000
 MAX_BINARY = 8_000_000
@@ -203,19 +205,80 @@ def transpose_inverse(m):
     return tuple(x/determinant for col in cofactors for x in col), determinant < 0
 
 
-def material(raw):
+class Textures:
+    def __init__(self, root, access, external):
+        self.images = items(root.get("images", []), "images", texture_cook.MAX_LAYERS)
+        self.textures = items(root.get("textures", []), "textures", texture_cook.MAX_LAYERS)
+        self.samplers = items(root.get("samplers", []), "samplers", texture_cook.MAX_LAYERS)
+        self.access = access
+        self.external = external
+        self.decoded = {}
+        self.indices = {}
+        self.layers = []
+
+    def source(self, index):
+        image = obj(indexed(self.images, index, "texture.source"), "image")
+        if "bufferView" in image:
+            require("uri" not in image and image.get("mimeType") == "image/png", "Expected a PNG image bufferView")
+            data, _, stride = indexed(self.access.views, image["bufferView"], "image.bufferView")
+            require(stride == 0, "Image bufferView cannot be strided")
+            return data
+        uri = image.get("uri")
+        require(type(uri) is str, "Image URI must be a string")
+        prefix = "data:image/png;base64,"
+        if uri.startswith(prefix):
+            encoded = uri[len(prefix):]
+            require(len(encoded) <= 4*((texture_cook.MAX_PNG+2)//3), "PNG base64 exceeds byte budget")
+            try:
+                return base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise ImportError("Invalid PNG base64") from error
+        require(re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,79}\.png", uri) is not None
+                and uri in self.external, "Local PNG must be declared in the catalog")
+        return self.external[uri]
+
+    def bind(self, raw, srgb):
+        if raw is None:
+            return 0
+        info = obj(raw, "textureInfo")
+        require(integer(info.get("texCoord", 0), "textureInfo.texCoord", 0) == 0 and not info.get("extensions"),
+                "Texture requires unsupported coordinates or extensions")
+        texture = obj(indexed(self.textures, info.get("index"), "textureInfo.index"), "texture")
+        if "sampler" in texture:
+            sampler = obj(indexed(self.samplers, texture["sampler"], "texture.sampler"), "sampler")
+            require(all(sampler.get(name, default) == default for name, default in
+                        (("magFilter", 9729), ("minFilter", 9987), ("wrapS", 10497), ("wrapT", 10497))),
+                    "Texture sampler requires repeat and trilinear filtering")
+        image = integer(texture.get("source"), "texture.source", len(self.images)-1)
+        key = (image, srgb)
+        if key not in self.indices:
+            require(len(self.layers) < texture_cook.MAX_LAYERS, "Texture layer budget exceeded")
+            if image not in self.decoded:
+                self.decoded[image] = texture_cook.decode_png(self.source(image))
+            self.layers.append(texture_cook.mip_chain(self.decoded[image], srgb))
+            self.indices[key] = len(self.layers)
+        return self.indices[key]
+
+
+def material(raw, textures):
     value = obj(raw, "material")
     pbr = obj(value.get("pbrMetallicRoughness", {}), "pbrMetallicRoughness")
     require(value.get("alphaMode", "OPAQUE") == "OPAQUE", "Only OPAQUE materials are supported")
-    require(not any(name.endswith("Texture") for name in (*value, *pbr)), "Textured materials are unsupported")
+    require(not any(name.endswith("Texture") and name != "normalTexture" for name in value) and
+            not any(name.endswith("Texture") and name not in ("baseColorTexture", "metallicRoughnessTexture")
+                    for name in pbr), "Unsupported material texture role")
+    base = textures.bind(pbr.get("baseColorTexture"), True)
+    metal_rough = textures.bind(pbr.get("metallicRoughnessTexture"), False)
+    normal = textures.bind(value.get("normalTexture"), False)
+    scale = number(value["normalTexture"].get("scale", 1), "normalTexture.scale", 0, 4) if normal else 1
     color = vector(pbr.get("baseColorFactor", [1, 1, 1, 1]), 4, "baseColorFactor", 0, 1)
     metal = number(pbr.get("metallicFactor", 1), "metallicFactor", 0, 1)
     roughness = number(pbr.get("roughnessFactor", 1), "roughnessFactor", 0, 1)
     emissive = vector(value.get("emissiveFactor", [0, 0, 0]), 3, "emissiveFactor", 0, 1)
-    return (*color[:3], metal, roughness, *emissive)
+    return (*color[:3], metal, roughness, *emissive), (base, metal_rough, normal, scale)
 
 
-def bake_primitive(raw, matrix, access, materials, budget):
+def bake_primitive(raw, matrix, access, materials, fallback, budget, textured):
     primitive = obj(raw, "primitive")
     require(type(primitive.get("mode", 4)) is int and primitive.get("mode", 4) == 4
             and "targets" not in primitive, "Only static triangle lists are supported")
@@ -232,14 +295,32 @@ def bake_primitive(raw, matrix, access, materials, budget):
     require(len(indices) % 3 == 0 and len(indices) <= budget, "Triangle count or expanded vertex budget exceeded")
     require(max(indices) < len(positions), "Triangle index outside position array")
     inv, reflected = transpose_inverse(matrix)
-    palette = indexed(materials, primitive["material"], "primitive.material") if "material" in primitive else material({})
+    palette, layers = indexed(materials, primitive["material"], "primitive.material") if "material" in primitive else fallback
+    uv = access.read(attributes["TEXCOORD_0"], "VEC2", (5126,), vertex=True) if "TEXCOORD_0" in attributes else None
+    require(not any(layers[:3]) or uv is not None, "Textured primitive requires TEXCOORD_0")
+    if uv is not None:
+        require(len(uv) == len(positions) and all(-1024 <= v <= 1024 for pair in uv for v in pair),
+                "UV count or range outside bounds")
+    tangent = access.read(attributes["TANGENT"], "VEC4", (5126,), vertex=True) if "TANGENT" in attributes else None
+    require(not layers[2] or tangent is not None and normals is not None, "Normal map requires tangent and normal data")
+    if tangent is not None:
+        require(len(tangent) == len(positions) and all(abs(t[3]) == 1 and abs(math.hypot(*t[:3])-1) < 0.002 for t in tangent),
+                "Tangent count, length or handedness outside bounds")
+        sign = -1 if reflected else 1
+        tangent = [(*normalize(tuple(sum(matrix[col*4+row]*t[col] for col in range(3)) for row in range(3)),
+                                "vertex tangent"), t[3]*sign) for t in tangent]
     positions = [tuple(sum(matrix[col*4+row]*p[col] for col in range(3)) + matrix[12+row]
                        for row in range(3)) for p in positions]
     require(all(math.isfinite(x) and abs(x) <= 4096 for p in positions for x in p), "Transformed position outside bounds")
     if normals is not None:
         normals = [normalize(tuple(sum(inv[col*3+row]*n[col] for col in range(3)) for row in range(3)),
                              "vertex normal") for n in normals]
+    if layers[2]:
+        require(all(abs(sum(x*y for x, y in zip(n, t[:3]))) < 0.01 for n, t in zip(normals, tangent)),
+                "Normal map tangent is not perpendicular")
     data = bytearray(struct.pack("<I8f", len(indices), *palette))
+    if textured:
+        data.extend(struct.pack("<3If", *layers))
     for first in range(0, len(indices), 3):
         a, b, c = indices[first:first+3]
         if reflected:
@@ -250,6 +331,9 @@ def bake_primitive(raw, matrix, access, materials, budget):
                                "triangle normal")
         for i in (a, b, c):
             data.extend(struct.pack("<6f", *positions[i], *(normals[i] if normals is not None else normal)))
+            if textured:
+                data.extend(struct.pack("<6f", *(uv[i] if uv is not None else (0, 0)),
+                                        *(tangent[i] if tangent is not None else (0, 0, 0, 1))))
     return bytes(data), len(indices)
 
 
@@ -270,7 +354,10 @@ def bake(source, external):
     nodes = items(root.get("nodes"), "nodes", MAX_NODES)
     scenes = items(root.get("scenes"), "scenes", 32)
     scene = obj(indexed(scenes, root.get("scene", 0), "scene"), "scene")
-    materials = [material(raw) for raw in items(root.get("materials", []), "materials", 64)]
+    textures = Textures(root, access, external)
+    materials = [material(raw, textures) for raw in items(root.get("materials", []), "materials", 64)]
+    fallback = material({}, textures)
+    textured = bool(textures.layers)
     budget = MAX_VERTICES
     visited = set()
     baked = []
@@ -288,7 +375,7 @@ def bake(source, external):
             mesh = obj(indexed(meshes, node["mesh"], "node.mesh"), "mesh")
             for raw in items(mesh.get("primitives"), "mesh.primitives", MAX_PRIMITIVES):
                 require(len(baked) < MAX_PRIMITIVES, "Baked primitive budget exceeded")
-                data, count = bake_primitive(raw, matrix, access, materials, budget)
+                data, count = bake_primitive(raw, matrix, access, materials, fallback, budget, textured)
                 baked.append(data)
                 budget -= count
         for child in items(node.get("children", []), "node.children", MAX_NODES):
@@ -297,4 +384,7 @@ def bake(source, external):
     for index in items(scene.get("nodes"), "scene.nodes", MAX_NODES):
         visit(index, IDENTITY, 1)
     require(baked, "Selected scene contains no triangles")
+    if textured:
+        return (struct.pack("<8sII", b"EMBMSH02", len(baked), len(textures.layers)) +
+                b"".join(textures.layers) + b"".join(baked))
     return struct.pack("<8sI", b"EMBMSH01", len(baked)) + b"".join(baked)

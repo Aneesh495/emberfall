@@ -48,7 +48,11 @@ private:
     std::vector<Mat4> inverse_bind_;
 };
 
-struct MeshVertex { Vec3 position, normal; };
+struct MeshVertex {
+    Vec3 position, normal;
+    std::array<float,2> uv{};
+    std::array<float,4> tangent{};
+};
 
 struct WeightedVertex {
     MeshVertex vertex;

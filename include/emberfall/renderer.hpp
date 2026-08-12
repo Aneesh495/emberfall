@@ -37,6 +37,7 @@ struct FrameReport {
     std::uint32_t shadow_maps{}, shadow_draws{};
     std::uint32_t motion_items{}, animated_triangles{};
     bool history_used{};
+    std::uint32_t texture_layers{}, uploaded_texture_layers{};
 };
 
 class Renderer {

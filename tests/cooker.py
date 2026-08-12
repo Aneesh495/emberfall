@@ -57,6 +57,16 @@ with tempfile.TemporaryDirectory(prefix="ember-cook-test-") as root:
     assert (first / "manifest.json").read_bytes() == before
     external.write_bytes(data)
     assert cook(source, first) == ["prism-monitor.mesh"]
+    dial = source / "prism-dial.png"
+    original_dial = dial.read_bytes()
+    dial.write_bytes((source / "prism-metal.png").read_bytes())
+    assert cook(source, first) == ["prism-monitor.mesh"]
+    old_manifest = (first / "manifest.json").read_bytes()
+    dial.write_bytes(original_dial[:-3])
+    cook(source, first, succeeds=False)
+    assert (first / "manifest.json").read_bytes() == old_manifest
+    dial.write_bytes(original_dial)
+    assert cook(source, first) == ["prism-monitor.mesh"]
     before = (first / "manifest.json").read_bytes()
     manifest = json.loads(before)
     for name, output in manifest["outputs"].items():

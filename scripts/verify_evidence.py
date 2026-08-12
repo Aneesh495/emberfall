@@ -118,6 +118,7 @@ def verify_render(raw):
     check(fixture is not None and int(fixture[1])>=200 and abs(int(fixture[2]))<=35,
           "Point shadow color witness outside bounds")
     verify_temporal(raw)
+    verify_material(raw)
     return {
         "render_gpu_p50_ms": percentile(timings, 0.5), "render_gpu_p99_ms": percentile(timings, 0.99),
         "render_host_p50_ms": percentile(host, 0.5), "render_host_p99_ms": percentile(host, 0.99)
@@ -139,6 +140,21 @@ def verify_temporal(raw):
     check(pixels("cut") == pixels("reset"), "Camera cut reused invalid history")
     pixels("resize", 700, 470)
     check("validation_errors=0" in (raw / "temporal_fixture.out").read_text(), "Temporal validation incomplete")
+
+
+def verify_material(raw):
+    def center(name):
+        image = (raw / "material-fixture" / (name + ".ppm")).read_bytes()
+        header = b"P6\n512 320\n255\n"
+        check(image.startswith(header) and len(image) == len(header)+512*320*3, "Material readback extent mismatch")
+        start = len(header)
+        return [sum(image[start+(y*512+x)*3+c] for x in range(254,259) for y in range(158,163)) for c in range(3)]
+
+    factor, srgb, normal, reload = [center(name) for name in ("factor", "srgb", "normal", "reloaded")]
+    check(max(abs(a-b) for a,b in zip(factor,srgb)) <= 50, "sRGB material conversion disagrees with linear reference")
+    check(sum(srgb)-sum(normal) >= 500, "Normal texture did not darken the reference patch")
+    check(sum(reload)-sum(normal) >= 500, "Material reload did not replace the GPU texture")
+    check("validation_errors=0" in (raw / "material_fixture.out").read_text(), "Material validation incomplete")
 
 
 def verify_package(bundle):
@@ -169,7 +185,7 @@ def verify_package(bundle):
     check("ui_check=settings,save,keyboard,focus,pause,restart,resize" in (raw / "ui_check.out").read_text() and
           "validation_errors=0" in (raw / "ui_check.out").read_text(), "Native UI diagnostic incomplete")
     editor = (raw / "editor.out").read_text()
-    check("editor_frames=25 validation_errors=0" in editor and "mesh_triangles=64" in editor,
+    check("editor_frames=25 validation_errors=0" in editor and "mesh_triangles=64 texture_layers=3" in editor,
           "Editor or imported mesh render diagnostic incomplete")
     for filename in ("frame.ppm", "ui.ppm", "editor.ppm", "ending.ppm"):
         header, shape, rgb = (raw / filename).read_bytes().split(b"\n", 2)
@@ -178,7 +194,7 @@ def verify_package(bundle):
               rgb.startswith(b"255\n") and len(rgb) == 4 + width * height * 3, "Incomplete framebuffer readback")
     packaged = (raw / "package_smoke.out").read_text()
     states = re.findall(r"replay_ticks=(\d+) final_hash=(\d+) completed=1", packaged)
-    check(len(states) == 3 and "mesh_triangles=64" in packaged, "Packaged route or imported asset missing")
+    check(len(states) == 3 and "mesh_triangles=64 texture_layers=3" in packaged, "Packaged route or imported asset missing")
     return states
 
 
@@ -207,7 +223,7 @@ def verify(bundle, source, tool):
     commands = [json.loads(line) for line in (bundle / "COMMANDS.jsonl").read_text().splitlines()]
     names = ["doctor", "build", "cook", "ctest", "world", "scheduler", "solo", "network", "ecs", "physics"]
     if profile == "portability-diagnostic":
-        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "render", "ui_check", "editor", "package", "package_smoke"]
+        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "material_fixture", "render", "ui_check", "editor", "package", "package_smoke"]
     check([row["name"] for row in commands] == names and all(
         row["exit"] == 0 and 0 <= row["wall_seconds"] < row["timeout_seconds"] for row in commands
     ), "Required command failed or missing")
@@ -228,7 +244,7 @@ def verify(bundle, source, tool):
         check(name == Path(name).name and name.endswith((".scene", ".mesh")), "Invalid cooked asset name")
         check(digest(levels / name) == record["sha256"], "Cooked asset mismatch")
         if name.endswith(".mesh"):
-            check((levels / name).read_bytes().startswith(b"EMBMSH01"), "Invalid baked mesh header")
+            check((levels / name).read_bytes().startswith((b"EMBMSH01", b"EMBMSH02")), "Invalid baked mesh header")
         for dependency in record.get("mesh_dependencies", []):
             check(dependency in catalog and dependency.endswith(".mesh"), "Unknown cooked mesh dependency")
     replays = {}

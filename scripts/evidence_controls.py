@@ -57,6 +57,11 @@ def erased_history(bundle):
     shutil.copyfile(fixture / "cold.ppm", fixture / "warm.ppm")
 
 
+def unchanged_material_reload(bundle):
+    fixture = bundle / "raw" / "material-fixture"
+    shutil.copyfile(fixture / "normal.ppm", fixture / "reloaded.ppm")
+
+
 def wrong_source(bundle):
     for name in ("SOURCE_INPUTS.json", "ACCEPTANCE.json"):
         target = bundle / name
@@ -85,6 +90,7 @@ def main():
             ("false_timing", inaccurate_gpu, True, "Reported GPU time disagrees"),
             ("missing_gpu_pass", erased_shadow, True, "Missing GPU pass timing"),
             ("missing_temporal_accumulation", erased_history, True, "Temporal accumulation missing"),
+            ("stale_material_reload", unchanged_material_reload, True, "Material reload did not replace"),
         ]
     results = []
     for name, mutate, update, expected in controls:

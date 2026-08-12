@@ -10,13 +10,15 @@ import subprocess
 import tempfile
 
 import gltf_import
+import texture_cook
 
 
 NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
 GUID = re.compile(r"[0-9a-f]{32}")
 LIMIT = 2_000_000
-EXTENSIONS = {"scene": (".scene",), "prefab": (".prefab",), "mesh": (".gltf", ".glb"), "buffer": (".bin",)}
-SOURCE_LIMITS = {"mesh": gltf_import.MAX_DOCUMENT + gltf_import.MAX_BINARY + 28, "buffer": gltf_import.MAX_BINARY}
+EXTENSIONS = {"scene": (".scene",), "prefab": (".prefab",), "mesh": (".gltf", ".glb"), "buffer": (".bin",), "image": (".png",)}
+SOURCE_LIMITS = {"mesh": gltf_import.MAX_DOCUMENT + gltf_import.MAX_BINARY + 28, "buffer": gltf_import.MAX_BINARY,
+                 "image": texture_cook.MAX_PNG}
 
 
 def bounded(path, limit=LIMIT):
@@ -53,7 +55,7 @@ def load_catalog(source):
         raise ValueError("Unsupported catalog header")
     assets = {}
     placements = []
-    mesh_buffers = {}
+    mesh_inputs = {}
     for row in rows[1:]:
         if not row or row.startswith("#"):
             continue
@@ -71,8 +73,8 @@ def load_catalog(source):
             assets[name] = {"kind": kind, "guid": guid, "sha256": digest(data), "bytes": len(data)}
         elif len(fields) == 7 and fields[0] == "place":
             placements.append(fields[1:])
-        elif len(fields) == 3 and fields[0] == "mesh-buffer":
-            mesh_buffers.setdefault(fields[1], []).append(fields[2])
+        elif len(fields) == 3 and fields[0] in ("mesh-buffer", "mesh-image"):
+            mesh_inputs.setdefault(fields[1], []).append((fields[0][5:], fields[2]))
         else:
             raise ValueError(f"Invalid catalog record: {row}")
         if len(assets) > 128 or len(placements) > 256:
@@ -80,21 +82,22 @@ def load_catalog(source):
     for level, prefab, *_ in placements:
         if assets.get(level, {}).get("kind") != "scene" or assets.get(prefab, {}).get("kind") != "prefab":
             raise ValueError("Invalid catalog placement dependency")
-    for mesh, buffers in mesh_buffers.items():
-        if assets.get(mesh, {}).get("kind") != "mesh" or len(buffers) > 16 or len(buffers) != len(set(buffers)):
+    for mesh, inputs in mesh_inputs.items():
+        names = {name for _, name in inputs}
+        if assets.get(mesh, {}).get("kind") != "mesh" or len(inputs) > 32 or len(inputs) != len(names):
             raise ValueError(f"Invalid mesh dependency list: {mesh}")
-        if any(assets.get(name, {}).get("kind") != "buffer" for name in buffers):
-            raise ValueError(f"Unknown mesh buffer dependency: {mesh}")
-        if sum(assets[name]["bytes"] for name in buffers) > gltf_import.MAX_BINARY:
+        if any(assets.get(name, {}).get("kind") != kind for kind, name in inputs):
+            raise ValueError(f"Unknown mesh input dependency: {mesh}")
+        if sum(assets[name]["bytes"] for kind, name in inputs if kind == "buffer") > gltf_import.MAX_BINARY:
             raise ValueError(f"Mesh buffers exceed total byte budget: {mesh}")
-    return assets, placements, mesh_buffers
+    return assets, placements, mesh_inputs
 
 
 def cook(source, target, tool):
     target.mkdir(parents=True, exist_ok=True)
-    assets, placements, mesh_buffers = load_catalog(source)
+    assets, placements, mesh_inputs = load_catalog(source)
     tool_hash = digest(bounded(tool, 64_000_000))
-    importer_hash = digest(Path(gltf_import.__file__).read_bytes())
+    importer_hash = digest(Path(gltf_import.__file__).read_bytes() + Path(texture_cook.__file__).read_bytes())
     recipe_hash = digest(Path(__file__).read_bytes())
     cache_file = target / ".cook-cache.json"
     cache = {}
@@ -116,8 +119,8 @@ def cook(source, target, tool):
             if kind not in ("scene", "mesh"):
                 continue
             uses = [row[1:] for row in placements if row[0] == name] if kind == "scene" else []
-            dependency_buffers = mesh_buffers.get(name, [])
-            dep_names = sorted({name, *dependency_buffers, *(item[0] for item in uses)})
+            dependencies = mesh_inputs.get(name, [])
+            dep_names = sorted({name, *(item for _, item in dependencies), *(item[0] for item in uses)})
             output = name if kind == "scene" else Path(name).stem + ".mesh"
             if output in new_cache:
                 raise ValueError(f"Duplicate cooked output: {output}")
@@ -136,8 +139,8 @@ def cook(source, target, tool):
                         command.extend([str(source / prefab), *args])
                     subprocess.run(command, check=True, timeout=30)
                 else:
-                    buffers = {item: bounded(source / item, gltf_import.MAX_BINARY) for item in dependency_buffers}
-                    model = gltf_import.bake(bounded(source / name, SOURCE_LIMITS["mesh"]), buffers)
+                    inputs = {item: bounded(source / item, SOURCE_LIMITS[kind]) for kind, item in dependencies}
+                    model = gltf_import.bake(bounded(source / name, SOURCE_LIMITS["mesh"]), inputs)
                     (staged / output).write_bytes(model)
                 output_hash = digest(bounded(staged / output))
                 rebuilt.append(output)
@@ -153,7 +156,7 @@ def cook(source, target, tool):
             if missing:
                 raise ValueError(f"Scene {output} references uncataloged meshes: {', '.join(sorted(set(missing)))}")
             record["mesh_dependencies"] = sorted(set(refs))
-        if load_catalog(source) != (assets, placements, mesh_buffers):
+        if load_catalog(source) != (assets, placements, mesh_inputs):
             raise RuntimeError("Catalog inputs changed during cooking")
         for name in rebuilt:
             os.replace(staged / name, target / name)

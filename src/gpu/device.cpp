@@ -161,6 +161,16 @@ void Renderer::State::create_device() {
         constexpr auto required_depth = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
         if ((hdr.optimalTilingFeatures & required) != required ||
             (depth.optimalTilingFeatures & required_depth) != required_depth) continue;
+        bool material_formats = true;
+        for (const auto format : {VK_FORMAT_R8G8B8A8_UNORM,VK_FORMAT_R8G8B8A8_SRGB}) {
+            VkFormatProperties info{};
+            vkGetPhysicalDeviceFormatProperties(adapter,format,&info);
+            constexpr auto texture_features = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                              VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+            material_formats &= (info.optimalTilingFeatures & texture_features)==texture_features;
+        }
+        if (!material_formats) continue;
         const auto extensions = enumerate<VkExtensionProperties>([&](auto count, auto* list) {
             return vkEnumerateDeviceExtensionProperties(adapter,nullptr,count,list);
         });
@@ -214,6 +224,9 @@ Renderer::State::~State() {
             free(frame.instances);
             free(frame.motions);
             free(frame.mesh_motions);
+            free(frame.texture_staging);
+            vkDestroyImageView(device,frame.color_textures,nullptr);
+            free(frame.textures);
             free(frame.overlay);
             free(frame.lighting);
             free(frame.light_tiles);
@@ -227,6 +240,7 @@ Renderer::State::~State() {
         free(geometry);
         vkDestroySampler(device,sampler,nullptr);
         vkDestroySampler(device,shadow_sampler,nullptr);
+        vkDestroySampler(device,material_sampler,nullptr);
         vkDestroySemaphore(device,timeline,nullptr);
         vkDestroyPipeline(device,scene_pipeline,nullptr);
         vkDestroyPipeline(device,temporal_pipeline,nullptr);

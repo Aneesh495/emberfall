@@ -18,25 +18,28 @@ std::uint32_t Renderer::State::memory_type(std::uint32_t bits, VkMemoryPropertyF
     throw std::runtime_error("No compatible GPU memory type");
 }
 
-VkImageView Renderer::State::make_view(VkImage image, VkFormat format, VkImageAspectFlags aspect) const {
+VkImageView Renderer::State::make_view(VkImage image, VkFormat format, VkImageAspectFlags aspect,
+                                      std::uint32_t levels, std::uint32_t layers) const {
     auto view = vk<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
     view.image = image;
-    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.viewType = layers==1 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     view.format = format;
-    view.subresourceRange = {aspect,0,1,0,1};
+    view.subresourceRange = {aspect,0,levels,0,layers};
     VkImageView result{};
     check(vkCreateImageView(device,&view,nullptr,&result),"Create image view");
     return result;
 }
 
-void Renderer::State::make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect, VkExtent2D dimensions) {
+void Renderer::State::make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect,
+                                 VkExtent2D dimensions, std::uint32_t levels, std::uint32_t layers, VkImageCreateFlags flags) {
     auto info = vk<VkImageCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
     info.imageType = VK_IMAGE_TYPE_2D;
     info.format = format;
     if (!dimensions.width) dimensions = extent;
     info.extent = {dimensions.width,dimensions.height,1};
-    info.mipLevels = 1;
-    info.arrayLayers = 1;
+    info.flags = flags;
+    info.mipLevels = levels;
+    info.arrayLayers = layers;
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = use;
@@ -49,7 +52,7 @@ void Renderer::State::make_image(Image& image, VkFormat format, VkImageUsageFlag
     allocation.memoryTypeIndex = memory_type(request.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     check(vkAllocateMemory(device,&allocation,nullptr,&image.memory),"Allocate graph image memory");
     check(vkBindImageMemory(device,image.image,image.memory,0),"Bind graph image memory");
-    image.view = make_view(image.image,format,aspect);
+    image.view = make_view(image.image,format,aspect,levels,layers);
 }
 
 void Renderer::State::make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags use) {
@@ -95,10 +98,12 @@ void Renderer::State::create_pipeline_layouts() {
     sample_info.bindingCount = static_cast<std::uint32_t>(resolve_bindings.size());
     sample_info.pBindings = resolve_bindings.data();
     check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&resolve_layout),"Create temporal descriptors");
-    const std::array<VkDescriptorSetLayoutBinding,3> light_bindings{{
+    const std::array<VkDescriptorSetLayoutBinding,5> light_bindings{{
         {0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
         {1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
-        {2,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
+        {2,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {3,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+        {4,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
     }};
     sample_info.bindingCount = static_cast<std::uint32_t>(light_bindings.size());
     sample_info.pBindings = light_bindings.data();
@@ -137,6 +142,13 @@ void Renderer::State::create_pipeline_layouts() {
     sampling.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sampling.addressModeU = sampling.addressModeV = sampling.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     check(vkCreateSampler(device,&sampling,nullptr,&sampler),"Create HDR sampler");
+    sampling.addressModeU = sampling.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampling.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampling.maxLod = static_cast<float>(MeshTexture::mips-1);
+    check(vkCreateSampler(device,&sampling,nullptr,&material_sampler),"Create repeating trilinear material sampler");
+    sampling.addressModeU = sampling.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampling.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampling.maxLod = 0;
     sampling.magFilter = sampling.minFilter = VK_FILTER_NEAREST;
     check(vkCreateSampler(device,&sampling,nullptr,&shadow_sampler),"Create shadow comparison sampler");
 }
@@ -165,7 +177,6 @@ void Renderer::State::create_frames() {
             check(vkCreateQueryPool(device,&query,nullptr,&frame.timer),"Create frame timer queries");
         }
         make_buffer(frame.instances,(instance_limit+shadow_instance_limit)*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        static_assert(sizeof(Motion) == sizeof(Mat4)+sizeof(float));
         make_buffer(frame.motions,instance_limit*sizeof(Motion),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.mesh_motions,uploaded_mesh_limit*sizeof(Motion),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.overlay,overlay_limit*sizeof(OverlayVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -173,6 +184,12 @@ void Renderer::State::create_frames() {
         make_buffer(frame.light_tiles,TileLights::max_tiles*sizeof(TileLights::Mask),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         make_buffer(frame.skin,uploaded_vertex_limit*sizeof(MeshVertex),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         make_buffer(frame.skin_instances,uploaded_mesh_limit*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        make_buffer(frame.texture_staging,MeshTexture::limit*MeshTexture::bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        constexpr VkExtent2D tile{MeshTexture::side,MeshTexture::side};
+        make_image(frame.textures,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                   VK_IMAGE_ASPECT_COLOR_BIT,tile,MeshTexture::mips,MeshTexture::limit,VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT);
+        frame.color_textures = make_view(frame.textures.image,VK_FORMAT_R8G8B8A8_SRGB,VK_IMAGE_ASPECT_COLOR_BIT,
+                                         MeshTexture::mips,MeshTexture::limit);
         make_image(frame.shadow,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                    VK_IMAGE_ASPECT_DEPTH_BIT,{ShadowViews::atlas_pixels,ShadowViews::atlas_pixels});
     }
@@ -272,7 +289,7 @@ bool Renderer::State::rebuild_swapchain() {
     tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::tonemap);
     overlay_pipeline = gpu::pipeline(device,shaders,overlay_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::overlay);
     const std::array<VkDescriptorPoolSize,3> pool_sizes{{
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,9*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,11*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,slots}
     }};
     auto pool = vk<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
@@ -321,7 +338,15 @@ bool Renderer::State::rebuild_swapchain() {
         grid.dstBinding = 2;
         grid.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         grid.pBufferInfo = &tiles;
-        const std::array writes{lighting,depth,grid};
+        const VkDescriptorImageInfo base_image{material_sampler,frame.color_textures,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo data_image{material_sampler,frame.textures.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        auto base = depth;
+        base.dstBinding = 3;
+        base.pImageInfo = &base_image;
+        auto data = base;
+        data.dstBinding = 4;
+        data.pImageInfo = &data_image;
+        const std::array writes{lighting,depth,grid,base,data};
         vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(writes.size()),writes.data(),0,nullptr);
     }
     for (std::size_t i=0; i<frames.size(); ++i) {

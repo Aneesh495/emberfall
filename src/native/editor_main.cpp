@@ -522,7 +522,8 @@ int Editor::run() {
         } else SDL_Delay(10);
         if (options_.frames && now > deadline) throw std::runtime_error("Editor diagnostic timed out");
     }
-    std::cout << "editor_frames=" << drawn << " validation_errors=" << renderer_.validation_errors() << " mesh_triangles=" << renderer_.report().imported_triangles << '\n';
+    std::cout << "editor_frames=" << drawn << " validation_errors=" << renderer_.validation_errors() << " mesh_triangles=" << renderer_.report().imported_triangles
+              << " texture_layers=" << renderer_.report().texture_layers << '\n';
     return renderer_.validation_errors() == 0 && (!options_.frames || drawn == options_.frames) ? 0 : 1;
 }
 

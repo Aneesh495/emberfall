@@ -9,13 +9,14 @@
 
 namespace ember::gpu {
 
-enum class ImageUse { hdr_output, depth_output, sampled, shadow_sampled, transfer_read, present };
+enum class ImageUse { hdr_output, depth_output, sampled, shadow_sampled, transfer_read, transfer_write, present };
 struct Resource {
     VkImage image{};
     VkImageAspectFlags aspect{};
     VkImageLayout layout{VK_IMAGE_LAYOUT_UNDEFINED};
     VkPipelineStageFlags2 stage{};
     VkAccessFlags2 access{};
+    std::uint32_t levels{1}, layers{1};
 };
 struct Use {
     Resource& image;
@@ -53,7 +54,7 @@ public:
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = image.image;
-            barrier.subresourceRange = {image.aspect,0,1,0,1};
+            barrier.subresourceRange = {image.aspect,0,image.levels,0,image.layers};
             image.layout = next.layout;
             image.stage = next.stage;
             image.access = next.access;
@@ -82,6 +83,9 @@ private:
         case ImageUse::shadow_sampled:
             return {nullptr,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+        case ImageUse::transfer_write:
+            return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_COPY_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT};
         case ImageUse::transfer_read:
             return {nullptr,VK_IMAGE_ASPECT_COLOR_BIT,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     VK_PIPELINE_STAGE_2_COPY_BIT,VK_ACCESS_2_TRANSFER_READ_BIT};

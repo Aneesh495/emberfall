@@ -7,10 +7,18 @@
 
 namespace ember {
 
+struct MeshTexture {
+    static constexpr std::uint32_t side = 64, mips = 7, limit = 16;
+    static constexpr std::size_t bytes = (side*side*4-1)/3*4;
+    std::string rgba;
+};
+
 struct SurfaceMaterial {
     Vec3 base_color{1,1,1};
     float metallic{}, roughness{1};
     Vec3 emissive{};
+    std::array<std::uint32_t,3> textures{};
+    float normal_scale{1};
 };
 
 struct MeshPrimitive {
@@ -21,6 +29,7 @@ struct MeshPrimitive {
 struct MeshAsset {
     std::vector<MeshPrimitive> primitives;
     std::size_t vertices{};
+    std::vector<MeshTexture> textures;
 };
 
 MeshAsset read_mesh(std::string_view bytes);
@@ -37,7 +46,7 @@ public:
 private:
     std::filesystem::path directory_;
     std::map<std::string, MeshAsset, std::less<>> assets_;
-    std::size_t resident_vertices_{};
+    std::size_t resident_vertices_{}, resident_textures_{};
 };
 
 struct MeshInstance {

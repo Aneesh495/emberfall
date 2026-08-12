@@ -41,10 +41,7 @@ struct Renderer::State {
         VkDeviceMemory memory{};
         void* mapped{};
     };
-    struct Motion {
-        Mat4 model;
-        float valid{};
-    };
+    using Motion = Mat4;
     struct Frame {
         VkCommandPool pool{};
         VkCommandBuffer commands{};
@@ -52,8 +49,11 @@ struct Renderer::State {
         std::uint64_t finished{};
         VkQueryPool timer{};
         Buffer instances, overlay, lighting, skin, skin_instances, light_tiles;
-        Buffer motions, mesh_motions;
-        Image hdr, depth, shadow, motion, history;
+        Buffer motions, mesh_motions, texture_staging;
+        Image hdr, depth, shadow, motion, history, textures;
+        VkImageView color_textures{};
+        std::uint32_t resident_layers{};
+        bool textures_initialized{};
         VkDescriptorSet sample{}, history_sample{}, resolve_set{}, resolve_first_set{}, light_set{};
         bool attachments_written{}, shadow_written{}, history_written{}, motion_sampled{};
     };
@@ -80,15 +80,18 @@ struct Renderer::State {
     struct SkinDraw { std::uint32_t first{}, count{}; };
     struct ShadowDraw { Mat4 projection; std::uint32_t first{}, count{}; };
     void record(Frame& frame, const Frame& previous, Screen& screen, const View& view, const Mat4& camera,
-                bool temporal, bool history, std::uint32_t count,
+                bool temporal, bool history, std::uint32_t count, std::uint32_t dirty_layers,
                 std::span<const ShadowDraw> shadows,std::uint32_t overlay_count,std::span<const SkinDraw> meshes);
     void save_capture();
     void wait(std::uint64_t serial) const;
-    void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect, VkExtent2D dimensions = {});
+    void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect,
+                    VkExtent2D dimensions = {}, std::uint32_t levels = 1, std::uint32_t layers = 1,
+                    VkImageCreateFlags flags = 0);
     void make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags use);
     void free(Image& image);
     void free(Buffer& buffer);
-    VkImageView make_view(VkImage image, VkFormat format, VkImageAspectFlags aspect) const;
+    VkImageView make_view(VkImage image, VkFormat format, VkImageAspectFlags aspect,
+                          std::uint32_t levels = 1, std::uint32_t layers = 1) const;
     std::uint32_t memory_type(std::uint32_t bits, VkMemoryPropertyFlags flags) const;
 
     SDL_Window* window{};
@@ -112,7 +115,7 @@ struct Renderer::State {
     VkDescriptorSetLayout sample_layout{}, light_layout{}, resolve_layout{};
     VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{}, shadow_layout{}, temporal_layout{};
     VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{}, temporal_pipeline{};
-    VkSampler sampler{}, shadow_sampler{};
+    VkSampler sampler{}, shadow_sampler{}, material_sampler{};
     Scheduler culling{4};
     TileLights tile_lights;
     std::vector<std::uint16_t> visibility;

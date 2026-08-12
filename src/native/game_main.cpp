@@ -659,7 +659,7 @@ int Application::run() {
     const auto& report = renderer_.report();
     std::cout << "frames=" << drawn << " surface=" << report.width << 'x' << report.height
               << " submitted=" << report.submitted << " culled=" << report.culled
-              << " mesh_triangles=" << report.imported_triangles << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors() << '\n';
+              << " mesh_triangles=" << report.imported_triangles << " texture_layers=" << report.texture_layers << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors() << '\n';
     if (network_) {
         const auto& net = network_->stats();
         std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received

@@ -11,3 +11,9 @@ place 03-meridian.scene relay-stanchion.prefab 100 -4.35 0 -8.1
 place 03-meridian.scene relay-stanchion.prefab 103 4.35 0 -8.1
 
 mesh prism-monitor.gltf aa4d4f1f6e7d4d0a9724f1863e882ca1
+image prism-dial.png da568f9e186442bcb434fb2327126d0d
+image prism-relief.png 6a05713ce68b4058a2ac79d9314fd702
+image prism-metal.png 77cc04c2ac014c8b80ad8bb8261144a7
+mesh-image prism-monitor.gltf prism-dial.png
+mesh-image prism-monitor.gltf prism-relief.png
+mesh-image prism-monitor.gltf prism-metal.png

@@ -1,5 +1,6 @@
 #include "state.hpp"
 
+#include <bit>
 #include <cstring>
 #include <limits>
 
@@ -55,7 +56,8 @@ void Renderer::State::wait(std::uint64_t value) const {
 }
 
 void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen, const View& view,
-                             const Mat4& camera, bool temporal, bool history, std::uint32_t count,std::span<const ShadowDraw> shadows,
+                             const Mat4& camera, bool temporal, bool history, std::uint32_t count,
+                             std::uint32_t dirty_layers,std::span<const ShadowDraw> shadows,
                              std::uint32_t overlay_count,std::span<const SkinDraw> meshes) {
     const auto cmd = frame.commands;
     auto begin = vk<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
@@ -105,6 +107,32 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
         screen.presented ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,0};
     const gpu::RenderGraph graph(cmd);
+    gpu::Resource textures{frame.textures.image,VK_IMAGE_ASPECT_COLOR_BIT};
+    if (frame.textures_initialized) textures = sampled_image(frame.textures.image);
+    textures.levels = MeshTexture::mips;
+    textures.layers = MeshTexture::limit;
+    if (dirty_layers || !frame.textures_initialized) {
+        graph.pass({{textures,gpu::ImageUse::transfer_write}},[&] {
+            std::array<VkBufferImageCopy,MeshTexture::limit*MeshTexture::mips> copies{};
+            std::uint32_t copy_count = 0;
+            for (std::uint32_t layer=0; layer<MeshTexture::limit; ++layer) {
+                if (!(dirty_layers & (1U<<layer))) continue;
+                VkDeviceSize offset = layer*MeshTexture::bytes;
+                for (std::uint32_t mip=0; mip<MeshTexture::mips; ++mip) {
+                    const auto side = MeshTexture::side>>mip;
+                    auto& copy = copies[copy_count++];
+                    copy.bufferOffset = offset;
+                    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT,mip,layer,1};
+                    copy.imageExtent = {side,side,1};
+                    offset += side*side*4;
+                }
+            }
+            if (copy_count) {
+                vkCmdCopyBufferToImage(cmd,frame.texture_staging.buffer,frame.textures.image,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,copy_count,copies.data());
+            }
+        });
+    }
     graph.pass({{shadow,gpu::ImageUse::depth_output}},[&] {
         constexpr auto tile = ShadowViews::tile_pixels;
         constexpr auto columns = ShadowViews::atlas_columns;
@@ -141,7 +169,8 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     vkCmdSetViewport(cmd,0,1,&viewport);
     vkCmdSetScissor(cmd,0,1,&rect);
     graph.pass({{hdr,gpu::ImageUse::hdr_output},{motion,gpu::ImageUse::hdr_output},
-                {depth,gpu::ImageUse::depth_output},{shadow,gpu::ImageUse::shadow_sampled}},[&] {
+                {depth,gpu::ImageUse::depth_output},{shadow,gpu::ImageUse::shadow_sampled},
+                {textures,gpu::ImageUse::sampled}},[&] {
         const std::array colors{color_attachment(frame.hdr.view,{0.028f,0.044f,0.072f,1}),
                                 color_attachment(frame.motion.view,{0,0,0,0})};
         auto depth_attachment = vk<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
@@ -320,7 +349,7 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         const auto prior = previous_models.find(id);
         if (!history || prior == previous_models.end()) return {};
         ++motion_items;
-        return {prior->second,1};
+        return prior->second;
     };
     std::array<LightSphere,light_limit> spheres{};
     std::size_t lamps = 0, local = light_limit, emitter = items.size();
@@ -373,6 +402,9 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
             if (count==budget) throw std::runtime_error("Frame shadow instance budget exceeded");
             std::memcpy(upload+(first+count)*sizeof(RenderItem),&items[i],sizeof(RenderItem));
             if (!bit) {
+                if (items[i].texture_layers != std::array<std::uint32_t,3>{}) {
+                    throw std::runtime_error("Texture layers must come from an imported mesh");
+                }
                 const auto motion = motion_for(items[i].history_id,items[i].model);
                 std::memcpy(static_cast<std::byte*>(frame.motions.mapped)+count*sizeof(Motion),&motion,sizeof(motion));
             }
@@ -426,15 +458,41 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         upload_mesh(mesh.vertices,{mesh.model,mesh.color,0});
     }
     const auto animated_vertices = uploaded_vertices;
+    std::map<const MeshAsset*,std::uint32_t> atlas_bases;
+    std::uint32_t texture_layers = 0, dirty_layers = 0;
     for (const auto& mesh : imported) {
         if (!mesh.asset) throw std::runtime_error("Missing draw mesh");
+        const auto [base,added_asset] = atlas_bases.emplace(mesh.asset,texture_layers);
+        if (added_asset) {
+            if (mesh.asset->textures.size()>MeshTexture::limit-texture_layers) {
+                throw std::runtime_error("Frame material texture limit exceeded");
+            }
+            for (const auto& layer : mesh.asset->textures) {
+                if (layer.rgba.size()!=MeshTexture::bytes) throw std::runtime_error("Invalid material mip chain");
+                auto* target = static_cast<char*>(frame.texture_staging.mapped)+texture_layers*MeshTexture::bytes;
+                const auto bit = 1U<<texture_layers++;
+                if (!(frame.resident_layers & bit) || std::memcmp(target,layer.rgba.data(),MeshTexture::bytes)!=0) {
+                    // Staging no longer proves residency until this submission succeeds.
+                    frame.resident_layers &= ~bit;
+                    std::memcpy(target,layer.rgba.data(),MeshTexture::bytes);
+                    dirty_layers |= bit;
+                }
+            }
+        }
         for (const auto& primitive : mesh.asset->primitives) {
-            const auto& m = primitive.material;
-            const Vec3 color{mesh.tint.x*m.base_color.x,mesh.tint.y*m.base_color.y,mesh.tint.z*m.base_color.z};
-            upload_mesh(primitive.vertices,{mesh.model,color,0,{m.emissive.x,m.emissive.y,m.emissive.z,m.roughness},m.metallic,mesh.history_id});
+            const auto& material = primitive.material;
+            const Vec3 color{mesh.tint.x*material.base_color.x,mesh.tint.y*material.base_color.y,mesh.tint.z*material.base_color.z};
+            RenderItem draw_item{mesh.model,color,0,{material.emissive.x,material.emissive.y,material.emissive.z,material.roughness},
+                                material.metallic,mesh.history_id};
+            for (std::size_t i=0; i<material.textures.size(); ++i) {
+                if (material.textures[i]>mesh.asset->textures.size()) throw std::runtime_error("Invalid material texture index");
+                if (material.textures[i]) draw_item.texture_layers[i] = base->second+material.textures[i];
+            }
+            draw_item.normal_scale = material.normal_scale;
+            upload_mesh(primitive.vertices,draw_item);
         }
     }
-    record(frame,previous,screen,view,camera,temporal,history,count,std::span(shadow_draws).first(shadow.count),static_cast<std::uint32_t>(overlay.size()),
+    record(frame,previous,screen,view,camera,temporal,history,count,dirty_layers,std::span(shadow_draws).first(shadow.count),static_cast<std::uint32_t>(overlay.size()),
            std::span(skin_draws).first(uploaded_draws));
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
@@ -461,6 +519,8 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     frame.attachments_written = frame.shadow_written = true;
     frame.history_written = frame.history_written || temporal;
     frame.motion_sampled = temporal;
+    frame.textures_initialized = true;
+    frame.resident_layers |= dirty_layers;
     history_active = temporal;
     previous_camera = camera;
     previous_view = view;
@@ -487,7 +547,7 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
               properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3,
-              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history};
+              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history,texture_layers,static_cast<std::uint32_t>(std::popcount(dirty_layers))};
     return true;
 }
 

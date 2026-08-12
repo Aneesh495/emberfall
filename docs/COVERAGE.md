@@ -11,12 +11,12 @@ The source paths below identify the current implementation or diagnostic for eac
 | E05 | Bounded workers, DAG ordering, read/write validation, exception propagation and cancellation. [Scheduler](../src/scheduler.cpp) |
 | E06 | Fixed-step accumulation and position interpolation, overload cap, native pause and editor single-step. Tick edges are captured. Per-command wall-clock timestamps remain. [Game loop](../src/native/game_main.cpp) |
 | E07 | Versioned catalog, stable GUIDs, SHA-256 lineage and dependency-aware incremental cooking. [Catalog cooker](../scripts/cook.py) |
-| E08 | glTF and GLB static geometry, node transforms and opaque metallic/roughness factors reach the game and editor. Texture, skin and clip imports remain. [Importer](GLTF.md) |
+| E08 | glTF and GLB static geometry, node transforms and opaque textures reach the game and editor. Skin and clip imports remain. [Importer](GLTF.md) |
 | E09 | Bounded asynchronous scene loading, priority, cancellation and lease-safe reload. GPU residency and render-asset streaming remain. [Scene stream](../src/scene_stream.cpp) |
 | E10 | Canonical scene schema, hierarchy, prefab ID rebinding and editor round trips. Live inheritance, override migration and scene schema migrations remain. [Editor document](../src/editor.cpp) |
 | E11 | Explicit image access, layouts, timeline ownership and slot reuse. Transient aliasing and integrated graph inspection remain. [Render graph](../src/gpu/render_graph.hpp) |
 | E12 | CPU frustum tests, instance batching and separate shadow culling. Occlusion and runtime LOD remain. [Visibility](../src/gpu/pipeline.cpp) |
-| E13 | Linear HDR color, metallic/roughness glTF factors, filmic display and sRGB output. Image-based lighting and normal-mapped assets remain. [Lighting shader](../shaders/scene.frag), [display shader](../shaders/tonemap.frag) |
+| E13 | Linear HDR color, metallic/roughness textures, tangent-space normal maps, filmic display and sRGB output. Image-based lighting remains. [Lighting shader](../shaders/scene.frag), [display shader](../shaders/tonemap.frag) |
 | E14 | Three directional cascades and one six-face point shadow fit a shared atlas. CPU-built forward light tiles bound fragment work. Depth clustering and multi-light shadow allocation remain. [Lighting shader](../shaders/scene.frag) |
 | E15 | HDR, exposure, rigid motion vectors, jitter and bounded temporal history. Camera cuts and resize have readback coverage. Skinned deformation uses current-frame samples. [Temporal study](TEMPORAL.md) |
 | E16 | Distance fog and editor gizmo geometry. Particles, decals and bounded translucent scene rendering remain. [Lighting shader](../shaders/scene.frag) |

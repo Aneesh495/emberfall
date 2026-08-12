@@ -5,7 +5,9 @@ layout(location=2) in vec4 tint;
 layout(location=3) flat in vec4 surfaceData;
 layout(location=4) flat in float metallic;
 layout(location=5) in vec4 previousClip;
-layout(location=6) flat in float historyValid;
+layout(location=6) in vec2 uv;
+layout(location=7) in vec4 tangent;
+layout(location=8) flat in uvec4 textureData;
 layout(location=0) out vec4 hdr;
 layout(location=1) out vec4 motion;
 
@@ -33,6 +35,8 @@ layout(set=0,binding=1) uniform sampler2D shadowDepth;
 layout(std430,set=0,binding=2) readonly buffer LightTiles {
     uvec4 masks[];
 } tiles;
+layout(set=0,binding=3) uniform sampler2DArray baseTextures;
+layout(set=0,binding=4) uniform sampler2DArray dataTextures;
 
 float sampleShadow(int viewIndex,vec3 position,float bias) {
     vec4 clip = lighting.shadowProjection[viewIndex]*vec4(position,1.0);
@@ -74,14 +78,14 @@ int pointFace(vec3 direction) {
     return direction.z>=0.0 ? 4 : 5;
 }
 
-vec3 materialLight(vec3 n, vec3 v, vec3 l, vec3 radiance) {
+vec3 materialLight(vec3 n, vec3 v, vec3 l, vec3 radiance, vec3 color, float roughness, float metal) {
     float nl = max(dot(n,l),0.0);
     if (nl <= 0.0) return vec3(0);
     float nv = max(dot(n,v),0.001);
     vec3 h = normalize(l+v+n*0.00001);
     float nh = max(dot(n,h),0.0);
     float vh = clamp(dot(v,h),0.0,1.0);
-    float alpha = max(0.045,surfaceData.w);
+    float alpha = max(0.045,roughness);
     alpha *= alpha;
     float alpha2 = alpha*alpha;
     float denominator = nh*nh*(alpha2-1.0)+1.0;
@@ -89,14 +93,37 @@ vec3 materialLight(vec3 n, vec3 v, vec3 l, vec3 radiance) {
     float distribution = alpha2 / max(pi*denominator*denominator,0.00000001);
     float geometry = 0.5 / max(nl*sqrt(nv*nv*(1.0-alpha2)+alpha2) +
                                nv*sqrt(nl*nl*(1.0-alpha2)+alpha2),0.0001);
-    vec3 f0 = mix(vec3(0.04),tint.rgb,metallic);
+    vec3 f0 = mix(vec3(0.04),color,metal);
     vec3 fresnel = f0+(1.0-f0)*pow(1.0-vh,5.0);
-    vec3 diffuse = (1.0-fresnel)*(1.0-metallic)*tint.rgb/pi;
+    vec3 diffuse = (1.0-fresnel)*(1.0-metal)*color/pi;
     return (diffuse+fresnel*distribution*geometry)*radiance*nl;
 }
 
 void main() {
-    vec3 n = normalize(normal);
+    vec3 geometricNormal = normalize(normal);
+    vec3 n = geometricNormal;
+    vec3 color = tint.rgb;
+    float roughness = surfaceData.w;
+    float metal = metallic;
+    vec2 uvDx = dFdx(uv);
+    vec2 uvDy = dFdy(uv);
+    if (textureData.x != 0u) {
+        color *= textureGrad(baseTextures,vec3(uv,float(textureData.x-1u)),uvDx,uvDy).rgb;
+    }
+    if (textureData.y != 0u) {
+        vec2 factors = textureGrad(dataTextures,vec3(uv,float(textureData.y-1u)),uvDx,uvDy).gb;
+        roughness *= factors.x;
+        metal *= factors.y;
+    }
+    if (textureData.z != 0u) {
+        vec3 sampleNormal = textureGrad(dataTextures,vec3(uv,float(textureData.z-1u)),uvDx,uvDy).xyz*2.0-1.0;
+        sampleNormal.xy *= uintBitsToFloat(textureData.w);
+        vec3 axis = tangent.xyz-n*dot(n,tangent.xyz);
+        if (dot(axis,axis)>0.00001 && dot(sampleNormal,sampleNormal)>0.00001) {
+            vec3 t = normalize(axis);
+            n = normalize(mat3(t,cross(n,t)*sign(tangent.w),n)*sampleNormal);
+        }
+    }
     vec3 v = normalize(camera.eye.xyz - worldPosition);
     vec3 light = lighting.directionCount.xyz;
     vec3 halfVector = normalize(v + light);
@@ -108,14 +135,15 @@ void main() {
     vec2 tile = abs(fract(worldPosition.xz + 0.5) - 0.5);
     float grid = 1.0 - smoothstep(0.01, 0.04, min(tile.x,tile.y));
     float surface = 1.0 - grid*max(n.y, 0.0)*0.16;
-    float sun = lambert > 0.0 ? sunVisibility(worldPosition,lambert) : 0.0;
+    float geometricLight = max(dot(geometricNormal,light),0.0);
+    float sun = geometricLight > 0.0 ? sunVisibility(worldPosition,geometricLight) : 0.0;
     vec3 result = tint.rgb*(ambient+warm*sun)*surface + highlight*sun + grazing*vec3(0.03,0.065,0.10);
     bool material = surfaceData.w >= 0.0;
     if (material) {
         vec3 reflected = reflect(-v,n);
         vec3 sky = mix(vec3(0.05,0.07,0.10),vec3(0.20,0.30,0.42),reflected.y*0.5+0.5);
-        result = tint.rgb*(ambient*(1.0-metallic)+sky*metallic) + surfaceData.rgb;
-        result += materialLight(n,v,light,vec3(2.8,2.2,1.7))*sun;
+        result = color*(ambient*(1.0-metal)+sky*metal) + surfaceData.rgb;
+        result += materialLight(n,v,light,vec3(2.8,2.2,1.7),color,roughness,metal)*sun;
     }
     uvec2 tileCoord = uvec2(gl_FragCoord.xy) / lighting.tileGrid.z;
     uvec4 mask = tiles.masks[tileCoord.y*lighting.tileGrid.x + tileCoord.x];
@@ -136,7 +164,7 @@ void main() {
             if (uint(lightIndex)==lighting.shadowOptions.z && facing>0.0) {
                 radiance *= sampleShadow(3+pointFace(-offset),worldPosition,0.0014);
             }
-            if (material) result += materialLight(n,v,offset*inversesqrt(max(distance2,0.0001)),radiance);
+            if (material) result += materialLight(n,v,offset*inversesqrt(max(distance2,0.0001)),radiance,color,roughness,metal);
             else result += tint.rgb*radiance*facing;
         }
     }
@@ -144,7 +172,7 @@ void main() {
     float fog = 1.0-exp(-length(camera.eye.xyz-worldPosition)*0.021);
     hdr = vec4(mix(result,vec3(0.042,0.067,0.11),fog*0.72),1.0);
     motion = vec4(0.0,0.0,0.0,1.0/gl_FragCoord.w);
-    if (historyValid > 0.0 && previousClip.w > 0.1) {
+    if (previousClip.w > 0.1) {
         vec2 previousUv = previousClip.xy/previousClip.w*0.5+0.5;
         motion.xyz = vec3(gl_FragCoord.xy*lighting.viewport.xy-previousUv,previousClip.w);
     }
