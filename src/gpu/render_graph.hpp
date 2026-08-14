@@ -1,5 +1,7 @@
 #pragma once
 
+#include "emberfall/renderer.hpp"
+
 #include <vulkan/vulkan.h>
 
 #include <array>
@@ -17,6 +19,7 @@ struct Resource {
     VkPipelineStageFlags2 stage{};
     VkAccessFlags2 access{};
     std::uint32_t levels{1}, layers{1};
+    std::string_view label{};
 };
 struct Use {
     Resource& image;
@@ -27,13 +30,18 @@ struct Use {
 // Reads require a writer or an explicit initialized import.
 class RenderGraph {
 public:
-    explicit RenderGraph(VkCommandBuffer commands) : commands_(commands) {}
+    RenderGraph(VkCommandBuffer commands,GraphReport& report) : commands_(commands), report_(report) { report_.pass_count = 0; }
 
     template<class Record>
-    void pass(std::initializer_list<Use> uses, Record&& record) const {
+    void pass(std::string_view name,std::initializer_list<Use> uses, Record&& record) const {
         std::array<VkImageMemoryBarrier2,8> barriers{};
         std::size_t count = 0;
-        if (uses.size() > barriers.size()) throw std::logic_error("Pass image limit");
+        if (report_.pass_count == report_.passes.size() || uses.size() > barriers.size()) {
+            throw std::logic_error("Render graph trace limit");
+        }
+        auto& entry = report_.passes[report_.pass_count++];
+        entry.name = name;
+        entry.image_count = uses.size();
         for (const auto& [image, usage] : uses) {
             const auto next = state(usage);
             if ((usage == ImageUse::sampled || usage == ImageUse::shadow_sampled || usage == ImageUse::transfer_read || usage == ImageUse::present) &&
@@ -43,6 +51,8 @@ public:
             for (std::size_t i=0; i<count; ++i) {
                 if (barriers[i].image == image.image) throw std::logic_error("Duplicate pass image usage");
             }
+            entry.images[count] = {image.label,layout_name(image.layout),layout_name(next.layout),image.stage,next.stage,
+                                   image.access,next.access,image.levels,image.layers};
             auto& barrier = barriers[count++];
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
             barrier.srcStageMask = image.stage;
@@ -68,6 +78,20 @@ public:
     }
 
 private:
+    static std::string_view layout_name(VkImageLayout layout) {
+        switch (layout) {
+        case VK_IMAGE_LAYOUT_UNDEFINED: return "UNDEFINED";
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: return "COLOR OUTPUT";
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL: return "DEPTH OUTPUT";
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return "SAMPLED COLOR";
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL: return "SAMPLED DEPTH";
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: return "COPY DESTINATION";
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return "COPY SOURCE";
+        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: return "PRESENT";
+        default: throw std::logic_error("Unreported graph image layout");
+        }
+    }
+
     static Resource state(ImageUse use) {
         switch (use) {
         case ImageUse::hdr_output:
@@ -96,6 +120,7 @@ private:
         throw std::logic_error("Unknown graph use");
     }
     VkCommandBuffer commands_;
+    GraphReport& report_;
 };
 
 }

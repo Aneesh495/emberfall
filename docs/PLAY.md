@@ -19,3 +19,5 @@ The idle explorer stays where you leave them until you toggle Follow. The Apertu
 ## Local network play
 
 Run `./play --host 48732 --key SHARED_KEY` on the host. Run `./play --join HOST_IPV4 48732 --key SHARED_KEY` on the other machine. Use the same content package on both machines. The host controls level changes and owns the save. The key identifies the session on a trusted network.
+
+In co-op, F9 opens the traffic panel. The traces show sends and receives per second in 250 ms samples over the last 12 seconds. The host shows the latest applied remote input sequence. The client shows pending prediction commands and correction distance after replaying unacknowledged inputs. Pass `--network-monitor` to open the panel at launch.

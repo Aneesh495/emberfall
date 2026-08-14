@@ -3,7 +3,9 @@
 #include "emberfall/replay.hpp"
 
 #include <charconv>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <limits>
 
 namespace ember::native {
@@ -15,7 +17,7 @@ struct Options {
     std::filesystem::path assets, shaders, profile, capture, replay, record;
     unsigned frames{}, level{};
     int width{1100}, height{700};
-    bool validation{}, audio{true}, hosting{}, replay_fast{}, ui_check{};
+    bool validation{}, audio{true}, hosting{}, replay_fast{}, ui_check{}, network_monitor{};
     std::string address, key;
     std::uint16_t port{};
 };
@@ -58,6 +60,7 @@ Options parse(int argc,char** argv) {
         else if (arg == "--validate") options.validation = true;
         else if (arg == "--no-audio") options.audio = false;
         else if (arg == "--ui-check") options.ui_check = true;
+        else if (arg == "--network-monitor") options.network_monitor = true;
         else if (arg == "--size") {
             const std::string_view dimensions = value();
             const auto split = dimensions.find('x');
@@ -89,7 +92,7 @@ Options parse(int argc,char** argv) {
     if (options.port && (options.key.size() < 4 || options.key.size() > 64)) {
         throw std::runtime_error("Network play requires a shared key of 4 to 64 characters");
     }
-    if (!options.port && !options.key.empty()) throw std::runtime_error("A key requires a network role");
+    if (!options.port && (!options.key.empty() || options.network_monitor)) throw std::runtime_error("A key or monitor requires a network role");
     const auto base = executable_directory();
     if (options.assets.empty()) options.assets = base/"levels";
     if (options.shaders.empty()) options.shaders = base/"shaders";
@@ -115,6 +118,7 @@ private:
     Command companion();
     void trigger(GameEvent event);
     void poll_network(std::uint64_t now);
+    void paint_network(Canvas& canvas) const;
     void client_input(Command command);
     void accept(net::ServerFrame frame,std::uint64_t now);
     void load(Progress progress);
@@ -145,7 +149,13 @@ private:
     std::optional<Replay> script_, recording_;
     std::size_t script_cursor_{};
     bool recording_done_{}, script_done_{};
+    struct NetSample { float sent{}, received{}; };
     std::unique_ptr<net::Session> network_;
+    std::deque<NetSample> network_samples_;
+    net::Statistics previous_network_stats_{};
+    std::uint64_t last_network_sample_{}, accepted_snapshots_{};
+    float correction_{}, max_correction_{};
+    bool monitor_{}, peer_seen_{};
     std::deque<net::InputFrame> history_;
     std::uint32_t epoch_{}, net_order_{}, net_jump_{}, net_use_{}, applied_input_{};
     unsigned network_level_{}, first_ui_width_{};
@@ -156,6 +166,7 @@ private:
 Application::Application(const Options& options)
     : options_(options), platform_("The Lantern Reach",options.width,options.height,options.audio),
       renderer_(platform_.window(),options.shaders,options.validation), campaign_(options.assets,true) {
+    monitor_ = options.network_monitor;
     std::filesystem::create_directories(options.profile);
     try {
         settings_ = read_settings(options.profile/"settings.save");
@@ -184,7 +195,7 @@ Application::Application(const Options& options)
             note_ = "Waiting for host";
             note_time_ = 5;
         }
-        std::cout << "network=" << (options.hosting ? "host" : "client") << " port=" << network_->port() << '\n';
+        std::cout << "network=" << (options.hosting ? "host" : "client") << " port=" << network_->port() << std::endl;
     } else if (!options.replay.empty()) {
         script_ = read_replay(options.replay);
         if (script_->revision != campaign_.revision()) throw std::runtime_error("Replay campaign revision mismatch");
@@ -241,6 +252,7 @@ void Application::persist() {
 }
 
 void Application::handle(Input input) {
+    if (input.monitor && network_) monitor_ = !monitor_;
     if (input.resized) renderer_.resize();
     if (input.quit) quit_ = true;
     if (script_) return;
@@ -369,8 +381,10 @@ void Application::accept(net::ServerFrame frame,std::uint64_t now) {
         epoch_ = frame.epoch;
         net_order_ = net_jump_ = net_use_ = 0;
         history_.clear();
+        if (note_=="Waiting for host") note_time_ = 0;
     }
     const auto previous_checkpoint = progress_.checkpoint;
+    const auto predicted = world_->player(1).body.feet;
     world_->apply_snapshot(frame.simulation);
     last_server_tick_ = frame.simulation.ticks;
     remote_before_ = transitioned ? frame.simulation.players[0].body.feet : remote_after_;
@@ -380,6 +394,12 @@ void Application::accept(net::ServerFrame frame,std::uint64_t now) {
         history_.pop_front();
     }
     for (const auto& packet : history_) world_->tick({Command{},packet.command});
+    ++accepted_snapshots_;
+    if (transitioned) correction_ = max_correction_ = 0;
+    else {
+        correction_ = length(world_->player(1).body.feet-predicted);
+        max_correction_ = std::max(max_correction_,correction_);
+    }
     if (!frame.simulation.completed) progress_.checkpoint = frame.simulation.checkpoint;
     if (!frame.simulation.completed && frame.simulation.checkpoint && frame.simulation.checkpoint != previous_checkpoint) {
         trigger({Signal::checkpoint,frame.simulation.checkpoint});
@@ -395,6 +415,16 @@ void Application::accept(net::ServerFrame frame,std::uint64_t now) {
 void Application::poll_network(std::uint64_t now) {
     if (!network_) return;
     network_->poll(now);
+    peer_seen_ = peer_seen_ || network_->connected();
+    if (now-last_network_sample_>=250) {
+        const auto& stats = network_->stats();
+        const auto scale = 1000.0f/static_cast<float>(now-last_network_sample_);
+        network_samples_.push_back({static_cast<float>(stats.sent-previous_network_stats_.sent)*scale,
+                                    static_cast<float>(stats.received-previous_network_stats_.received)*scale});
+        if (network_samples_.size()>48) network_samples_.pop_front();
+        previous_network_stats_ = stats;
+        last_network_sample_ = now;
+    }
     if (options_.hosting) {
         if (epoch_ && now-last_broadcast_ >= 50) {
             network_->broadcast({epoch_,applied_input_,network_level_,world_->snapshot()});
@@ -407,6 +437,42 @@ void Application::poll_network(std::uint64_t now) {
             note_time_ = 4;
         }
     }
+}
+
+void Application::paint_network(Canvas& canvas) const {
+    constexpr float y = 366, width = 252;
+    const auto x = canvas.width()-width-14;
+    canvas.box(x,y,width,150,{0.018f,0.035f,0.062f,0.96f});
+    canvas.box(x,y,width,2,cyan);
+    canvas.text(x+10,y+11,1.38f,options_.hosting ? "HOST TRAFFIC" : "CLIENT TRAFFIC",cyan);
+    canvas.text(x+10,y+29,1.07f,network_->connected() ? "CONNECTED" : "WAITING FOR PEER",white);
+    canvas.text(x+182,y+29,1.05f,"EPOCH "+std::to_string(epoch_),muted);
+    const auto& stats = network_->stats();
+    canvas.text(x+10,y+44,1.07f,"SENT "+std::to_string(stats.sent)+"   RECEIVED "+std::to_string(stats.received),white);
+    canvas.text(x+10,y+58,1.05f,"DUP "+std::to_string(stats.duplicate)+"  RETRY "+std::to_string(stats.resent)+
+                "  REJECT "+std::to_string(stats.rejected),muted);
+    if (options_.hosting) {
+        canvas.text(x+10,y+72,1.05f,"REMOTE INPUT "+std::to_string(applied_input_),muted);
+    } else {
+        std::ostringstream detail;
+        detail << "PENDING " << history_.size() << "  FIX " << std::fixed << std::setprecision(2) << correction_
+               << " / " << max_correction_ << " M";
+        canvas.text(x+10,y+72,1.05f,detail.str(),muted);
+    }
+    constexpr float chart_x = 10, chart_bottom = 130, chart_height = 41;
+    float peak = 1;
+    for (const auto& point : network_samples_) peak = std::max({peak,point.sent,point.received});
+    canvas.box(x+chart_x,y+chart_bottom,230,1,muted);
+    for (std::size_t i=1; i<network_samples_.size(); ++i) {
+        const auto a = network_samples_[i-1], b = network_samples_[i];
+        const auto right = x+chart_x+static_cast<float>(48-network_samples_.size()+i)*4.8f;
+        const auto py = [&](float count) { return y+chart_bottom-count*chart_height/peak; };
+        canvas.line(right-4.8f,py(a.sent),right,py(b.sent),1,amber);
+        canvas.line(right-4.8f,py(a.received),right,py(b.received),1,cyan);
+    }
+    canvas.text(x+10,y+136,0.97f,"SEND",amber);
+    canvas.text(x+51,y+136,0.97f,"RECV",cyan);
+    canvas.text(x+95,y+136,0.97f,"PEAK "+std::to_string(static_cast<unsigned>(peak))+" PACKETS/S",muted);
 }
 
 void Application::save_tape() {
@@ -632,6 +698,7 @@ int Application::run() {
         const auto logical_width = std::clamp(600.0f*static_cast<float>(width)/static_cast<float>(std::max(1,height)),440.0f,1800.0f);
         Canvas canvas(logical_width);
         paint(canvas);
+        if (monitor_) paint_network(canvas);
         if (((options_.frames && drawn+1 == options_.frames) || script_done_) && !options_.capture.empty()) {
             renderer_.capture_next(options_.capture);
         }
@@ -663,7 +730,8 @@ int Application::run() {
     if (network_) {
         const auto& net = network_->stats();
         std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received
-                  << " connected=" << network_->connected() << '\n';
+                  << " connected=" << network_->connected() << " peer_seen=" << peer_seen_
+                  << " accepted_snapshots=" << accepted_snapshots_ << " acknowledged_input=" << applied_input_ << '\n';
     }
     return (!options_.frames || drawn == options_.frames) && (!script_ || script_done_) && renderer_.validation_errors() == 0 ? 0 : 1;
 }
@@ -675,7 +743,7 @@ int run_game(int argc,char** argv) {
         std::cout << "lantern-reach [--assets DIR] [--shaders DIR] [--profile DIR] [--validate]\n"
                      "              [--size WIDTHxHEIGHT] [--no-audio] [--level 1..3]\n"
                      "              [--frames N [--capture FILE.ppm]]\n"
-                     "              [--host PORT | --join IPV4 PORT] --key SHARED_KEY\n"
+                     "              [--host PORT | --join IPV4 PORT] --key SHARED_KEY [--network-monitor]\n"
                      "              [--record FILE | --replay FILE [--replay-fast]]\n"
                      "              [--ui-check --profile FRESH_DIRECTORY]\n";
         return 0;

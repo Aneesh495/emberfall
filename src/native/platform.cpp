@@ -69,6 +69,7 @@ Input Platform::input(const std::function<void(const SDL_Event&)>& observer) {
             case SDL_SCANCODE_TAB: input.select = true; break;
             case SDL_SCANCODE_SPACE: input.jump = true; break;
             case SDL_SCANCODE_E: input.interact = true; break;
+            case SDL_SCANCODE_F9: input.monitor = true; break;
             case SDL_SCANCODE_F11: input.fullscreen = true; break;
             case SDL_SCANCODE_UP: input.up = true; break;
             case SDL_SCANCODE_DOWN: input.down = true; break;

@@ -15,10 +15,10 @@ Emberfall runs as a native game and scene workshop. The current acceptance scope
 | G09 Content | Unverified | Catalog manifests, prefab rebuilds and scene cache reload are exercised. Static glTF and GLB meshes and bounded PNG textures cook and render in both native programs. Skeletal and clip imports and asynchronous GPU resource streaming remain. |
 | G10 Editor | Unverified | 1,000 edit operations, recovery reopen and separate play state are checked. The full prefab override and editor integration matrix remains. |
 | G11 Animation and navigation | Unverified | Weighted skin fixture, skinned cloth and collision-aware companion A* are available. Full animation asset imports and companion integration fixtures remain. |
-| G12 Networking | Unverified | All levels finish across two loopback endpoints under simulated impairment, including reconnect and duplicate event checks. Packaged two-machine play remains. |
+| G12 Networking | Unverified | All levels finish across two loopback endpoints under simulated impairment, including reconnect and duplicate event checks. A separate two-process packaged loopback smoke exercises authoritative snapshots and input. Packaged two-machine play remains. |
 | G13 Replay and save | Unverified | Exact recorded command replay, revision checks, save migration and corrupt/truncated record rejection. Interrupted storage fault injection remains. |
 | G14 Soak | Blocked | The full mixed eight-hour workload has not been run. |
-| G15 Tooling | Unverified | Raw hardware timestamp and workload reports, scene inspector, and content manifest exist. Integrated render, physics and network inspectors remain. |
+| G15 Tooling | Unverified | The editor exposes raw pass timing, Vulkan image barriers, allocation totals, live collision bounds and source dependencies. The game exposes live co-op traffic and correction counts. A complete integrated tooling walkthrough remains. |
 | G16 Semantic verifier | Unverified | The diagnostic verifier independently recomputes raw timing and rejects altered replay and duplicate events. Full coverage needs all mandatory workload artifacts. |
 | G17 Platform and release | Blocked | The macOS arm64 package launches using bundled libraries. A clean Linux hardware release is outstanding. |
 | G18 Completion | Blocked | Full acceptance and release remain open. |

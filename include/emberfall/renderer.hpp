@@ -24,6 +24,23 @@ struct OverlayVertex {
     std::array<float,4> color{};
 };
 
+struct ImageTransition {
+    std::string_view resource, previous_layout, layout;
+    std::uint64_t source_stage{}, destination_stage{}, source_access{}, destination_access{};
+    std::uint32_t levels{}, layers{};
+};
+
+struct PassReport {
+    std::string_view name;
+    std::array<ImageTransition,8> images;
+    std::size_t image_count{};
+};
+
+struct GraphReport {
+    std::array<PassReport,8> passes;
+    std::size_t pass_count{};
+};
+
 struct FrameReport {
     std::uint32_t width{}, height{}, submitted{}, culled{};
     double gpu_ms{};
@@ -38,6 +55,8 @@ struct FrameReport {
     std::uint32_t motion_items{}, animated_triangles{};
     bool history_used{};
     std::uint32_t texture_layers{}, uploaded_texture_layers{};
+    std::array<double,4> pass_gpu_ms{};
+    std::uint64_t owned_bytes{};
 };
 
 class Renderer {
@@ -52,6 +71,7 @@ public:
               std::span<const SkinBatch> meshes = {}, std::span<const MeshInstance> imported = {});
     void capture_next(std::filesystem::path file);
     const FrameReport& report() const;
+    const GraphReport& graph_report() const;
     std::string adapter() const;
     unsigned validation_errors() const;
 private:

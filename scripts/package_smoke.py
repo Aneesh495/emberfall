@@ -4,9 +4,54 @@ import hashlib
 import os
 from pathlib import Path
 import platform
+import re
+import select
+import secrets
+import socket
 import subprocess
 import sys
 import tempfile
+
+
+def coop(installed, profile, capture, env):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = str(reservation.getsockname()[1])
+    key = secrets.token_hex(12)
+    base = [installed / "play", "--no-audio", "--size", "620x390", "--key", key,
+            "--network-monitor"]
+    roles = (
+        ("host", ["--host", port, "--frames", "240"]),
+        ("client", ["--join", "127.0.0.1", port, "--frames", "150", "--capture", capture]),
+    )
+    observations = {}
+    processes = {}
+    try:
+        for role, options in roles:
+            processes[role] = subprocess.Popen([*base, "--profile", profile / role, *options], cwd=installed,
+                                               env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if role == "host":
+                ready, _, _ = select.select([processes[role].stdout], [], [], 10)
+                if not ready or processes[role].stdout.readline().strip() != f"network=host port={port}":
+                    raise RuntimeError("Packaged host did not publish its bound port")
+        for role, process in processes.items():
+            output, error = process.communicate(timeout=48)
+            witness = re.search(r"packets_sent=(\d+) packets_received=(\d+) connected=[01] peer_seen=1 "
+                                r"accepted_snapshots=(\d+) acknowledged_input=(\d+)", output)
+            if process.returncode != 0 or witness is None or min(int(witness[1]), int(witness[2])) < 5:
+                raise RuntimeError(f"Packaged co-op {role} failed: {output} {error}")
+            observations[role] = tuple(map(int, witness.groups()))
+    finally:
+        for process in processes.values():
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+    sent, received, snapshots, _ = observations["client"]
+    host_sent, host_received, _, ack = observations["host"]
+    if snapshots < 5 or ack == 0:
+        raise RuntimeError("Packaged co-op did not exchange authoritative frames and player input")
+    print(f"coop_client_sent={sent} coop_client_received={received} coop_client_snapshots={snapshots}", flush=True)
+    print(f"coop_host_sent={host_sent} coop_host_received={host_received} coop_host_input={ack}", flush=True)
 
 
 def main():
@@ -37,6 +82,7 @@ def main():
             if i == 2:
                 argv.extend(["--capture", capture])
             subprocess.run(argv, check=True, env=env, timeout=35, cwd=installed)
+        coop(installed, Path(folder) / "coop", capture.with_name("network.ppm"), env)
 
 
 if __name__ == "__main__":

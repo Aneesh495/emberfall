@@ -44,4 +44,4 @@ jobs:
           mkdir build/unpacked
           tar -C build/unpacked -xzf dist/the-lantern-reach-linux-x86_64.tar.gz
           (cd build/unpacked/The-Lantern-Reach && sha256sum -c SHA256SUMS)
-          xvfb-run -a build/unpacked/The-Lantern-Reach/play --no-audio --size 680x420 --profile build/ci-profile --replay evidence/linux-ci/replays/03-meridian.scene.replay --replay-fast
+          xvfb-run -a python3 scripts/package_smoke.py dist/the-lantern-reach-linux-x86_64.tar.gz evidence/linux-ci/replays build/package-ending.ppm

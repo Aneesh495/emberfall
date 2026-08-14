@@ -187,7 +187,14 @@ def verify_package(bundle):
     editor = (raw / "editor.out").read_text()
     check("editor_frames=25 validation_errors=0" in editor and "mesh_triangles=64 texture_layers=3" in editor,
           "Editor or imported mesh render diagnostic incomplete")
-    for filename in ("frame.ppm", "ui.ppm", "editor.ppm", "ending.ppm"):
+    for page in ("frame", "physics", "assets"):
+        log = (raw / f"editor_{page}.out").read_text()
+        witness = re.search(r"graph_passes=(\d+) owned_bytes=(\d+) debug_colliders=(\d+)", log)
+        check("editor_frames=25 validation_errors=0 mesh_triangles=64 texture_layers=3" in log and witness and
+              int(witness[1]) >= 6 and int(witness[2]) > 0 and (int(witness[3]) > 0) == (page == "physics"),
+              "Editor live diagnostics evidence incomplete")
+    for filename in ("frame.ppm", "ui.ppm", "editor.ppm", "editor-frame.ppm", "editor-physics.ppm", "editor-assets.ppm",
+                     "network.ppm", "ending.ppm"):
         header, shape, rgb = (raw / filename).read_bytes().split(b"\n", 2)
         width, height = map(int, shape.split())
         check(header == b"P6" and 200 <= width <= 4096 and 200 <= height <= 4096 and
@@ -195,6 +202,10 @@ def verify_package(bundle):
     packaged = (raw / "package_smoke.out").read_text()
     states = re.findall(r"replay_ticks=(\d+) final_hash=(\d+) completed=1", packaged)
     check(len(states) == 3 and "mesh_triangles=64 texture_layers=3" in packaged, "Packaged route or imported asset missing")
+    client = re.search(r"coop_client_sent=(\d+) coop_client_received=(\d+) coop_client_snapshots=(\d+)", packaged)
+    host = re.search(r"coop_host_sent=(\d+) coop_host_received=(\d+) coop_host_input=(\d+)", packaged)
+    check(client and host and min(map(int, client.groups())) >= 5 and min(int(host[1]), int(host[2])) >= 5
+          and int(host[3]) > 0, "Packaged co-op did not exchange authoritative traffic")
     return states
 
 
@@ -223,7 +234,8 @@ def verify(bundle, source, tool):
     commands = [json.loads(line) for line in (bundle / "COMMANDS.jsonl").read_text().splitlines()]
     names = ["doctor", "build", "cook", "ctest", "world", "scheduler", "solo", "network", "ecs", "physics"]
     if profile == "portability-diagnostic":
-        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "material_fixture", "render", "ui_check", "editor", "package", "package_smoke"]
+        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "material_fixture", "render", "ui_check", "editor",
+                  "editor_frame", "editor_physics", "editor_assets", "package", "package_smoke"]
     check([row["name"] for row in commands] == names and all(
         row["exit"] == 0 and 0 <= row["wall_seconds"] < row["timeout_seconds"] for row in commands
     ), "Required command failed or missing")

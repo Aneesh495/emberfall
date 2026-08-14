@@ -46,6 +46,7 @@ Renderer::Renderer(SDL_Window* window, std::filesystem::path shaders, bool valid
 Renderer::~Renderer() = default;
 void Renderer::resize() { state_->dirty = true; }
 const FrameReport& Renderer::report() const { return state_->report; }
+const GraphReport& Renderer::graph_report() const { return state_->graph_trace; }
 unsigned Renderer::validation_errors() const { return state_->errors; }
 
 std::string Renderer::adapter() const {

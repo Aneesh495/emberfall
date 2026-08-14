@@ -106,13 +106,20 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     gpu::Resource backbuffer{screen.image,VK_IMAGE_ASPECT_COLOR_BIT,
         screen.presented ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,0};
-    const gpu::RenderGraph graph(cmd);
+    hdr.label = "SCENE HDR";
+    depth.label = "SCENE DEPTH";
+    shadow.label = "SHADOW ATLAS";
+    motion.label = "MOTION AND DEPTH";
+    resolved.label = "CURRENT HISTORY";
+    backbuffer.label = "SWAPCHAIN";
+    const gpu::RenderGraph graph(cmd,graph_trace);
     gpu::Resource textures{frame.textures.image,VK_IMAGE_ASPECT_COLOR_BIT};
     if (frame.textures_initialized) textures = sampled_image(frame.textures.image);
     textures.levels = MeshTexture::mips;
     textures.layers = MeshTexture::limit;
+    textures.label = "MATERIAL ARRAY";
     if (dirty_layers || !frame.textures_initialized) {
-        graph.pass({{textures,gpu::ImageUse::transfer_write}},[&] {
+        graph.pass("MATERIAL UPLOAD",{{textures,gpu::ImageUse::transfer_write}},[&] {
             std::array<VkBufferImageCopy,MeshTexture::limit*MeshTexture::mips> copies{};
             std::uint32_t copy_count = 0;
             for (std::uint32_t layer=0; layer<MeshTexture::limit; ++layer) {
@@ -133,7 +140,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
             }
         });
     }
-    graph.pass({{shadow,gpu::ImageUse::depth_output}},[&] {
+    graph.pass("SHADOW ATLAS",{{shadow,gpu::ImageUse::depth_output}},[&] {
         constexpr auto tile = ShadowViews::tile_pixels;
         constexpr auto columns = ShadowViews::atlas_columns;
         const VkRect2D atlas{{0,0},{ShadowViews::atlas_pixels,ShadowViews::atlas_pixels}};
@@ -168,7 +175,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,1);
     vkCmdSetViewport(cmd,0,1,&viewport);
     vkCmdSetScissor(cmd,0,1,&rect);
-    graph.pass({{hdr,gpu::ImageUse::hdr_output},{motion,gpu::ImageUse::hdr_output},
+    graph.pass("OPAQUE HDR",{{hdr,gpu::ImageUse::hdr_output},{motion,gpu::ImageUse::hdr_output},
                 {depth,gpu::ImageUse::depth_output},{shadow,gpu::ImageUse::shadow_sampled},
                 {textures,gpu::ImageUse::sampled}},[&] {
         const std::array colors{color_attachment(frame.hdr.view,{0.028f,0.044f,0.072f,1}),
@@ -221,17 +228,18 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
         };
         if (history) {
             auto prior = sampled_image(previous.history.image);
-            graph.pass({{hdr,gpu::ImageUse::sampled},{motion,gpu::ImageUse::sampled},
+            prior.label = "PREVIOUS HISTORY";
+            graph.pass("TEMPORAL RESOLVE",{{hdr,gpu::ImageUse::sampled},{motion,gpu::ImageUse::sampled},
                         {prior,gpu::ImageUse::sampled},{resolved,gpu::ImageUse::hdr_output}},resolve);
         } else {
-            graph.pass({{hdr,gpu::ImageUse::sampled},{motion,gpu::ImageUse::sampled},
+            graph.pass("TEMPORAL RESOLVE",{{hdr,gpu::ImageUse::sampled},{motion,gpu::ImageUse::sampled},
                         {resolved,gpu::ImageUse::hdr_output}},resolve);
         }
     }
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,3);
     auto& display_image = temporal ? resolved : hdr;
     const auto display_set = temporal ? frame.history_sample : frame.sample;
-    graph.pass({{display_image,gpu::ImageUse::sampled},{backbuffer,gpu::ImageUse::hdr_output}},[&] {
+    graph.pass("DISPLAY AND OVERLAY",{{display_image,gpu::ImageUse::sampled},{backbuffer,gpu::ImageUse::hdr_output}},[&] {
         auto color = color_attachment(screen.view,{0,0,0,1});
         auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
         rendering.renderArea = rect;
@@ -257,7 +265,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
         vkCmdEndRendering(cmd);
     });
     if (!capture_file.empty()) {
-        graph.pass({{backbuffer,gpu::ImageUse::transfer_read}},[&] {
+        graph.pass("FRAME READBACK",{{backbuffer,gpu::ImageUse::transfer_read}},[&] {
             auto barrier = vk<VkBufferMemoryBarrier2>(VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2);
             barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
             barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
@@ -280,7 +288,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
             vkCmdPipelineBarrier2(cmd,&dependency);
         });
     }
-    graph.pass({{backbuffer,gpu::ImageUse::present}},[]{});
+    graph.pass("PRESENT",{{backbuffer,gpu::ImageUse::present}},[]{});
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,4);
     check(vkEndCommandBuffer(cmd),"Finish recording frame");
 }
@@ -300,13 +308,17 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     const auto& previous = frames[(serial+slots-1)%slots];
     wait(frame.finished);
     double elapsed = 0;
+    std::array<double,4> pass_gpu_ms{};
     const auto timed_serial = frame.finished;
     std::array<std::uint64_t,5> stamps{};
     if (timed_serial && frame.timer) {
         check(vkGetQueryPoolResults(device,frame.timer,0,5,sizeof(stamps),stamps.data(),sizeof(stamps[0]),
                                     VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT),"Read completed GPU pass timestamps");
         const auto mask = timestamp_bits == 64 ? std::numeric_limits<std::uint64_t>::max() : (1ULL<<timestamp_bits)-1;
-        elapsed = static_cast<double>((stamps.back()-stamps.front()) & mask)*properties.limits.timestampPeriod*1e-6;
+        for (std::size_t i=0; i<pass_gpu_ms.size(); ++i) {
+            pass_gpu_ms[i] = static_cast<double>((stamps[i+1]-stamps[i]) & mask)*properties.limits.timestampPeriod*1e-6;
+            elapsed += pass_gpu_ms[i];
+        }
     }
     std::uint32_t index = 0;
     const auto acquired = vkAcquireNextImageKHR(device,swapchain,1'000'000'000ULL,frame.acquire,nullptr,&index);
@@ -544,10 +556,17 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     const auto triangles = count*(view.dense_mesh ? 192U : 12U)+uploaded_vertices/3;
     const unsigned draws = 1 + static_cast<unsigned>(temporal) + static_cast<unsigned>(count>0) + nonempty_shadows + static_cast<unsigned>(!overlay.empty()) +
                            static_cast<unsigned>(shadow.count+1)*static_cast<unsigned>(uploaded_draws);
+    auto owned = geometry.allocated+capture.allocated;
+    for (const auto& slot : frames) {
+        owned += slot.instances.allocated+slot.overlay.allocated+slot.lighting.allocated+slot.skin.allocated+
+                 slot.skin_instances.allocated+slot.light_tiles.allocated+slot.motions.allocated+slot.mesh_motions.allocated+
+                 slot.texture_staging.allocated+slot.hdr.allocated+slot.depth.allocated+slot.shadow.allocated+
+                 slot.motion.allocated+slot.history.allocated+slot.textures.allocated;
+    }
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
               properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3,
-              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history,texture_layers,static_cast<std::uint32_t>(std::popcount(dirty_layers))};
+              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history,texture_layers,static_cast<std::uint32_t>(std::popcount(dirty_layers)),pass_gpu_ms,owned};
     return true;
 }
 

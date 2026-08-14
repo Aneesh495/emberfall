@@ -51,6 +51,7 @@ void Renderer::State::make_image(Image& image, VkFormat format, VkImageUsageFlag
     allocation.allocationSize = request.size;
     allocation.memoryTypeIndex = memory_type(request.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     check(vkAllocateMemory(device,&allocation,nullptr,&image.memory),"Allocate graph image memory");
+    image.allocated = allocation.allocationSize;
     check(vkBindImageMemory(device,image.image,image.memory,0),"Bind graph image memory");
     image.view = make_view(image.image,format,aspect,levels,layers);
 }
@@ -68,6 +69,7 @@ void Renderer::State::make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsa
     allocation.memoryTypeIndex = memory_type(request.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     check(vkAllocateMemory(device,&allocation,nullptr,&buffer.memory),"Allocate coherent upload memory");
+    buffer.allocated = allocation.allocationSize;
     check(vkBindBufferMemory(device,buffer.buffer,buffer.memory,0),"Bind buffer memory");
     check(vkMapMemory(device,buffer.memory,0,VK_WHOLE_SIZE,0,&buffer.mapped),"Map buffer memory");
 }

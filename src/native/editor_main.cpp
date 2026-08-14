@@ -1,4 +1,4 @@
-#include "platform.hpp"
+#include "inspector.hpp"
 #include "emberfall/editor.hpp"
 
 #include <charconv>
@@ -92,7 +92,8 @@ void assign(Node& node,Field field,const std::string& text) {
 struct Options {
     std::filesystem::path file, shaders, capture, mesh_directory;
     unsigned frames{};
-    bool validation{};
+    bool validation{}, start_play{};
+    InspectorPage inspector{};
 };
 
 struct Drag {
@@ -136,6 +137,8 @@ private:
     Field field_{};
     std::optional<Drag> drag_;
     std::string text_, status_{"Ready"};
+    AssetLinks links_;
+    std::size_t pass_index_{}, debug_colliders_{};
     float logical_width_{1020};
     int width_{1190}, height_{700};
     bool typing_{}, snapping_{true}, paused_{}, step_{}, close_{}, guard_{};
@@ -147,6 +150,7 @@ Editor::Editor(Options options)
     refresh_assets();
     if (file_.recovered()) status_ = "Recovered unsaved changes";
     refresh_meshes();
+    if (options_.start_play) play_ = file_.document().play(mesh_library_);
 }
 
 View Editor::view() const {
@@ -159,6 +163,7 @@ View Editor::view() const {
 
 void Editor::refresh_assets() {
     assets_.clear();
+    links_ = load_asset_links(options_.file);
     const auto folder = options_.file.has_parent_path() ? options_.file.parent_path() : ".";
     for (const auto& entry : std::filesystem::directory_iterator(folder)) {
         if (assets_.size() == 128) break;
@@ -270,6 +275,17 @@ void Editor::key(const SDL_KeyboardEvent& e) {
         }
         return;
     }
+    if (e.scancode == SDL_SCANCODE_F9) {
+        options_.inspector = static_cast<InspectorPage>((static_cast<unsigned>(options_.inspector)+1)%4);
+        return;
+    }
+    if (options_.inspector==InspectorPage::frame && renderer_.graph_report().pass_count) {
+        const auto count = renderer_.graph_report().pass_count;
+        if (e.scancode==SDL_SCANCODE_PAGEUP || e.scancode==SDL_SCANCODE_PAGEDOWN) {
+            pass_index_ = (pass_index_+(e.scancode==SDL_SCANCODE_PAGEUP ? count-1 : 1))%count;
+            return;
+        }
+    }
     if (e.scancode == SDL_SCANCODE_F5) {
         if (play_) play_.reset();
         else play_ = file_.document().play(mesh_library_);
@@ -297,7 +313,10 @@ void Editor::key(const SDL_KeyboardEvent& e) {
     } else if (command && e.scancode == SDL_SCANCODE_P) make_prefab();
     else if (e.scancode == SDL_SCANCODE_I) add_prefab();
     else if (e.scancode == SDL_SCANCODE_V && !assets_.empty()) selected_asset_ = (selected_asset_+1)%assets_.size();
-    else if (e.scancode == SDL_SCANCODE_F8) refresh_meshes();
+    else if (e.scancode == SDL_SCANCODE_F8) {
+        refresh_meshes();
+        links_ = load_asset_links(options_.file);
+    }
     else if (e.scancode == SDL_SCANCODE_G) snapping_ = !snapping_;
     else if (e.scancode == SDL_SCANCODE_RETURN) field_input();
     else if (e.scancode == SDL_SCANCODE_INSERT || e.scancode == SDL_SCANCODE_N) {
@@ -469,6 +488,22 @@ void Editor::paint(Canvas& canvas) const {
     const auto hint = play_ ? "F5 STOP   F6 PAUSE   F7 STEP   WASD MOVE" :
         "N ADD   CTRL-S SAVE   CTRL-Z UNDO   F5 PLAY   SHIFT SELECT   DRAG X/Y/Z   ENTER EDIT";
     canvas.wrapped(13,577,1.14f,hint,quiet);
+    canvas.text(logical_width_-85,553,1.12f,"F9 METRICS",cyan);
+    switch (options_.inspector) {
+    case InspectorPage::closed: break;
+    case InspectorPage::frame: paint_frame_inspector(canvas,renderer_,pass_index_); break;
+    case InspectorPage::physics: paint_physics_inspector(canvas,play_.get(),debug_colliders_); break;
+    case InspectorPage::assets: {
+        std::string_view mesh;
+        if (!selected_.empty()) mesh = doc.scene().nodes.at(selected_.back()).mesh;
+        else {
+            const auto first = std::ranges::find_if(doc.scene().nodes,[](const auto& entry) { return !entry.second.mesh.empty(); });
+            if (first!=doc.scene().nodes.end()) mesh = first->second.mesh;
+        }
+        paint_asset_inspector(canvas,links_,mesh,mesh_library_ ? mesh_library_->find(mesh) : nullptr);
+        break;
+    }
+    }
 }
 
 int Editor::run() {
@@ -509,13 +544,17 @@ int Editor::run() {
             time = 0;
         }
         Canvas canvas(logical_width_);
+        auto viewport = view();
+        if (options_.inspector==InspectorPage::physics && play_) {
+            const auto aspect = static_cast<float>(width_)/static_cast<float>(std::max(1,height_));
+            debug_colliders_ = paint_collider_overlay(canvas,*play_,viewport,aspect);
+        }
         paint(canvas);
         if (options_.frames && drawn+1==options_.frames && !options_.capture.empty()) renderer_.capture_next(options_.capture);
         std::vector<MeshInstance> imported;
         const auto blocks = extract(imported);
         const auto actors = play_ ? play_->skin(1) : std::vector<SkinBatch>{};
         const auto models = play_ ? play_->imported_meshes() : std::span<const MeshInstance>(imported);
-        auto viewport = view();
         viewport.temporal = true;
         if (renderer_.draw(blocks,viewport,canvas.vertices(),actors,models)) {
             if (++drawn == options_.frames) break;
@@ -523,7 +562,9 @@ int Editor::run() {
         if (options_.frames && now > deadline) throw std::runtime_error("Editor diagnostic timed out");
     }
     std::cout << "editor_frames=" << drawn << " validation_errors=" << renderer_.validation_errors() << " mesh_triangles=" << renderer_.report().imported_triangles
-              << " texture_layers=" << renderer_.report().texture_layers << '\n';
+              << " texture_layers=" << renderer_.report().texture_layers
+              << " graph_passes=" << renderer_.graph_report().pass_count
+              << " owned_bytes=" << renderer_.report().owned_bytes << " debug_colliders=" << debug_colliders_ << '\n';
     return renderer_.validation_errors() == 0 && (!options_.frames || drawn == options_.frames) ? 0 : 1;
 }
 
@@ -531,7 +572,7 @@ int Editor::run() {
 
 int run_editor(int argc,char** argv) {
     if (argc<2 || std::string_view(argv[1]) == "--help") {
-        std::cout << "emberfall-editor SCENE [--mesh-dir DIRECTORY] [--validate] [--frames N [--capture FILE.ppm]]\n"
+        std::cout << "emberfall-editor SCENE [--mesh-dir DIRECTORY] [--validate] [--inspect frame|physics|assets] [--play] [--frames N [--capture FILE.ppm]]\n"
                      "emberfall-editor --new SCENE\n"
                      "emberfall-editor --translate SCENE ID DX DY DZ\n"
                      "emberfall-editor --set-mesh SCENE ID MESH_NAME\n";
@@ -575,6 +616,14 @@ int run_editor(int argc,char** argv) {
     for (int i=2; i<argc; ++i) {
         const std::string_view argument = argv[i];
         if (argument == "--validate") options.validation = true;
+        else if (argument == "--play") options.start_play = true;
+        else if (argument == "--inspect" && i+1<argc) {
+            const std::string_view page = argv[++i];
+            if (page=="frame") options.inspector = InspectorPage::frame;
+            else if (page=="physics") options.inspector = InspectorPage::physics;
+            else if (page=="assets") options.inspector = InspectorPage::assets;
+            else throw std::runtime_error("Unknown editor diagnostics page");
+        }
         else if (argument == "--mesh-dir" && i+1<argc) options.mesh_directory = argv[++i];
         else if (argument == "--frames" && i+1<argc) options.frames = number<unsigned>(argv[++i]);
         else if (argument == "--capture" && i+1<argc) options.capture = argv[++i];

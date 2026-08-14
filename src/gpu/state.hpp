@@ -35,11 +35,13 @@ struct Renderer::State {
         VkImage image{};
         VkImageView view{};
         VkDeviceMemory memory{};
+        VkDeviceSize allocated{};
     };
     struct Buffer {
         VkBuffer buffer{};
         VkDeviceMemory memory{};
         void* mapped{};
+        VkDeviceSize allocated{};
     };
     using Motion = Mat4;
     struct Frame {
@@ -132,6 +134,7 @@ struct Renderer::State {
     std::uint32_t jitter_index{};
     bool history_active{};
     FrameReport report{};
+    GraphReport graph_trace{};
     std::atomic<unsigned> errors{};
 };
 

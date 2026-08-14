@@ -45,6 +45,18 @@ int main(int argc, char** argv) {
             if (renderer.draw(scene,{{5,5,7},{0,0.6f,0}},overlay)) ++rendered;
         }
         const auto report = renderer.report();
+        const auto& graph = renderer.graph_report();
+        bool shadow_sample = false;
+        for (const auto& pass : std::span(graph.passes).first(graph.pass_count)) {
+            if (pass.name!="OPAQUE HDR") continue;
+            for (const auto& image : std::span(pass.images).first(pass.image_count)) {
+                shadow_sample |= image.resource=="SHADOW ATLAS" && image.previous_layout=="DEPTH OUTPUT" &&
+                                 image.layout=="SAMPLED DEPTH" && image.source_access && image.destination_access;
+            }
+        }
+        if (!shadow_sample || graph.passes.at(graph.pass_count-1).name!="PRESENT" || !report.owned_bytes) {
+            throw std::runtime_error("Missing live graph transitions or allocation total");
+        }
         std::cout << renderer.adapter() << '\n'
                   << "frames=" << rendered << " before=" << before << " final=" << report.width << 'x' << report.height
                   << " submitted=" << report.submitted << " culled=" << report.culled

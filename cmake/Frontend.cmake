@@ -46,7 +46,7 @@ add_executable(lantern-reach src/native/game_main.cpp src/native/audio.cpp)
 target_link_libraries(lantern-reach PRIVATE emberfall_native)
 add_dependencies(lantern-reach emberfall_levels)
 
-add_executable(emberfall-editor src/native/editor_main.cpp)
+add_executable(emberfall-editor src/native/editor_main.cpp src/native/inspector.cpp)
 target_link_libraries(emberfall-editor PRIVATE emberfall_native)
 add_dependencies(emberfall-editor emberfall_levels)
 

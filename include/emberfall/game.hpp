@@ -84,6 +84,7 @@ public:
     bool completed() const { return completed_; }
     SceneId checkpoint() const { return checkpoint_; }
     std::span<const GameEvent> events() const { return events_; }
+    std::span<const Collider> colliders() const { return colliders_; }
     std::uint64_t state_hash() const;
     void restore_checkpoint(SceneId id);
     SimulationState snapshot() const;

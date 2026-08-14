@@ -20,7 +20,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E14 | Three directional cascades and one six-face point shadow fit a shared atlas. CPU-built forward light tiles bound fragment work. Depth clustering and multi-light shadow allocation remain. [Lighting shader](../shaders/scene.frag) |
 | E15 | HDR, exposure, rigid motion vectors, jitter and bounded temporal history. Camera cuts and resize have readback coverage. Skinned deformation uses current-frame samples. [Temporal study](TEMPORAL.md) |
 | E16 | Distance fog and editor gizmo geometry. Particles, decals and bounded translucent scene rendering remain. [Lighting shader](../shaders/scene.frag) |
-| E17 | Device identity, shader load validation, raw GPU timestamps and framebuffer readback. Integrated pass and resource inspection remain. [Frame recorder](../src/gpu/frame.cpp) |
+| E17 | Device identity, shader load validation, raw GPU timestamps, framebuffer readback and live pass and resource inspection. [Frame recorder](../src/gpu/frame.cpp) |
 | E18 | Boxes, spheres, capsules and validated convex hulls with angular impulses. Single-witness contacts and bounded continuous sweeps. [Angular physics](ANGULAR_PHYSICS.md) |
 | E19 | Warm starts, friction, restitution, sleeping, layer masks, triggers and conservative CCD against static boxes. [Dynamics fixtures](../tests/dynamics.cpp) |
 | E20 | Swept character motion, small steps, grounded jumping, crouch and platform carry. General slopes remain. [Character controller](../src/collision.cpp) |
@@ -35,7 +35,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E29 | Separate play world with stop, pause and single-step. [Workshop](../src/native/editor_main.cpp) |
 | E30 | Prefab creation, remapped instantiation, dirty state, recovery and content validation. Drag-and-drop prefab overrides remain. [Prefab implementation](../src/editor.cpp) |
 | E31 | Versioned UDP packets, sequence/acknowledgement window, bounded handshake retries and fragment reassembly. Adaptive congestion control remains. [UDP session](../src/net_session.cpp) |
-| E32 | Authoritative host, two slots, quantized snapshots, client interpolation and bounded prediction. Area-of-interest policies remain. [Client runtime](../src/native/game_main.cpp) |
+| E32 | Authoritative host, two slots, quantized snapshots, client interpolation and bounded prediction and a live monitor. Two packaged applications exchange snapshots and player input on loopback. Area-of-interest policies remain. [Client runtime](../src/native/game_main.cpp) |
 | E33 | Prediction replays local commands after a bounded snapshot correction. Completion is read from authoritative state. Full irreversible event replication remains. [Snapshot application](../src/game.cpp) |
 | E34 | Peer timeout, late snapshots, reconnection and seeded fault injection. [UDP fault test](../tests/network.cpp) |
 | E35 | Atomic checkpoint saves, revision validation, migration and corrupt record checks. Interruption and disk-fault injection remain. [Save tests](../tests/campaign.cpp) |

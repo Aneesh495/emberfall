@@ -75,7 +75,7 @@ def main():
             try:
                 environment = os.environ.copy()
                 layer_library = environment.get("EMBERFALL_VALIDATION_LIB")
-                if layer_library and name in ("gpu_smoke", "render", "ui_check", "editor", "shadow_fixture", "temporal_fixture", "material_fixture"):
+                if layer_library and name in ("gpu_smoke", "render", "ui_check", "editor", "shadow_fixture", "temporal_fixture", "material_fixture", "editor_frame", "editor_physics", "editor_assets"):
                     environment["DYLD_LIBRARY_PATH"] = layer_library
                 result = subprocess.run(command, stdout=output, stderr=error, cwd=root, timeout=timeout, env=environment)
                 code = result.returncode
@@ -133,13 +133,20 @@ def main():
                                  "--profile", destination / "ui-profile", "--capture", logs / "ui.ppm"])
                 run("editor", [binary("emberfall-editor"), root / "assets/levels/02-prism.scene",
                                "--validate", "--frames", "25", "--capture", logs / "editor.ppm"])
+                for page in ("frame", "physics", "assets"):
+                    arguments = ["--inspect", page]
+                    if page == "physics":
+                        arguments.append("--play")
+                    run("editor_" + page, [binary("emberfall-editor"), root / "assets/levels/02-prism.scene",
+                                           "--validate", "--frames", "25", *arguments,
+                                           "--capture", logs / ("editor-" + page + ".ppm")])
                 package = destination / "package"
                 if run("package", ["./scripts/package.sh", build, package], timeout=120):
                     archives = list(package.glob("*.tar.gz"))
                     if len(archives) == 1:
                         run("package_smoke", ["python3", "scripts/package_smoke.py", archives[0],
-                                              destination / "replays", logs / "ending.ppm"], timeout=150)
-        required_count = 19 if args.profile == "portability-diagnostic" else 10
+                                              destination / "replays", logs / "ending.ppm"], timeout=190)
+        required_count = 22 if args.profile == "portability-diagnostic" else 10
         status = "recorded" if cooked and len(commands) == required_count and all(
             row["exit"] == 0 for row in commands
         ) else "failed"

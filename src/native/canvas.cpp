@@ -52,6 +52,18 @@ void Canvas::box(float x,float y,float w,float h,Color c) {
     vertices_.insert(vertices_.end(),{a,b,e,a,e,d});
 }
 
+void Canvas::line(float x0,float y0,float x1,float y1,float thickness,Color c) {
+    const auto length = std::hypot(x1-x0,y1-y0);
+    if (length < 0.01f) return;
+    const auto dx = (y0-y1)*thickness/(2*length), dy = (x1-x0)*thickness/(2*length);
+    const auto vertex = [&](float x,float y) {
+        return OverlayVertex{x/width_,y/600,{c.r,c.g,c.b,c.a}};
+    };
+    const auto a = vertex(x0+dx,y0+dy), b = vertex(x0-dx,y0-dy);
+    const auto d = vertex(x1+dx,y1+dy), e = vertex(x1-dx,y1-dy);
+    vertices_.insert(vertices_.end(),{a,b,e,a,e,d});
+}
+
 void Canvas::text(float x,float y,float size,std::string_view content,Color c) {
     for (char ch : content) {
         const auto rows = glyph(ch);

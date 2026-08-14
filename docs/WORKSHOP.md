@@ -13,4 +13,13 @@ make cook
 make package-game
 ```
 
+F9 cycles the frame profiler, collision overlay, asset dependencies and the normal viewport. Page Up and Page Down select a recorded pass. The frame panel shows the latest image layouts, Vulkan stage and access masks in hexadecimal, and mip and layer counts. Timings come from the last retired slot. The allocated byte total covers engine-owned Vulkan memory and omits swapchain and driver allocations.
+
+In play mode the collision page projects the first 128 live collider bounds. Gold identifies a support under either player. Edges crossing a clip plane may be omitted and the wireframes are an overlay. The asset page follows the selected model to its catalog source, GUID and local inputs. It also lists scene prefab placements. F8 refreshes the mesh library and catalog view.
+
+```sh
+make editor SCENE=assets/levels/02-prism.scene ARGS="--inspect frame"
+make editor SCENE=assets/levels/02-prism.scene ARGS="--play --inspect physics"
+```
+
 A dirty scene is recoverable through its adjacent `.scene.recover` file. A matching base fingerprint is required to restore it. Keep both files when inspecting a recovery conflict.

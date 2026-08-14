@@ -12,7 +12,7 @@ namespace ember::native {
 struct Input {
     Vec3 movement;
     bool quit{}, resized{}, pause{}, enter{}, select{}, jump{}, interact{}, crouch{}, fullscreen{};
-    bool up{}, down{}, left{}, right{}, lost_focus{}, restart{}, follow{};
+    bool up{}, down{}, left{}, right{}, lost_focus{}, restart{}, follow{}, monitor{};
 };
 
 class Platform {
@@ -38,6 +38,7 @@ class Canvas {
 public:
     explicit Canvas(float logical_width) : width_(logical_width) {}
     void box(float x,float y,float w,float h,Color c);
+    void line(float x0,float y0,float x1,float y1,float thickness,Color c);
     void text(float x,float y,float size,std::string_view content,Color c);
     void wrapped(float x,float y,float size,std::string_view content,Color c,float max_width = 0);
     std::span<const OverlayVertex> vertices() const { return vertices_; }
