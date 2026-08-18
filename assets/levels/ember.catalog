@@ -3,10 +3,12 @@ scene 01-aperture.scene 3a231e1119b445d0a275324896a3bcac
 scene 02-prism.scene a892e479aa8648b9b69c56ae78bb2ec1
 scene 03-meridian.scene bf51e07016a4491a81e2389a0f441922
 prefab relay-stanchion.prefab 17711a046fac4128b6a036059c4795d9
+prefab prism-stanchion.prefab 09ea4044c683417bb3f22e035e89d44f
+prefab prism-stanchion-amber.prefab 47360e720ca04ff8a32ba36d63162b79
 place 01-aperture.scene relay-stanchion.prefab 100 -5.25 0 -5.8
 place 01-aperture.scene relay-stanchion.prefab 103 5.25 0 -5.8
-place 02-prism.scene relay-stanchion.prefab 100 -5.4 0 -5.3
-place 02-prism.scene relay-stanchion.prefab 103 5.4 0 -5.3
+place 02-prism.scene prism-stanchion.prefab 100 -5.4 0 -5.3
+place 02-prism.scene prism-stanchion-amber.prefab 103 5.4 0 -5.3
 place 03-meridian.scene relay-stanchion.prefab 100 -4.35 0 -8.1
 place 03-meridian.scene relay-stanchion.prefab 103 4.35 0 -8.1
 

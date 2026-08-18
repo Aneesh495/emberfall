@@ -1,5 +1,6 @@
 #include "inspector.hpp"
 #include "emberfall/editor.hpp"
+#include "emberfall/prefab.hpp"
 
 #include <charconv>
 #include <iomanip>
@@ -254,8 +255,8 @@ void Editor::make_prefab() {
 
 void Editor::add_prefab() {
     if (assets_.empty()) throw std::runtime_error("No prefab in this directory");
-    const auto prefab = load_scene(assets_.at(selected_asset_));
-    const auto added = instantiate_prefab(prefab,file_.document().allocate_id(),{1.5f,0,0});
+    const auto prefab = load_prefab(assets_.at(selected_asset_));
+    const auto added = instantiate_prefab(prefab.scene,file_.document().allocate_id(),{1.5f,0,0});
     edit(added);
     selected_.clear();
     for (const auto& item : added) selected_.push_back(item.after->id);
@@ -575,7 +576,11 @@ int run_editor(int argc,char** argv) {
         std::cout << "emberfall-editor SCENE [--mesh-dir DIRECTORY] [--validate] [--inspect frame|physics|assets] [--play] [--frames N [--capture FILE.ppm]]\n"
                      "emberfall-editor --new SCENE\n"
                      "emberfall-editor --translate SCENE ID DX DY DZ\n"
-                     "emberfall-editor --set-mesh SCENE ID MESH_NAME\n";
+                     "emberfall-editor --set-mesh SCENE ID MESH_NAME\n"
+                     "emberfall-editor --place-prefab SCENE PREFAB X Y Z\n"
+                     "emberfall-editor --derive-prefab VARIANT BASE_FILENAME\n"
+                     "emberfall-editor --set-prefab-field VARIANT LOCAL_ID FIELD VALUE\n"
+                     "emberfall-editor --clear-prefab-field VARIANT LOCAL_ID FIELD\n";
         return argc < 2 ? 1 : 0;
     }
     const std::string_view action = argv[1];
@@ -588,6 +593,28 @@ int run_editor(int argc,char** argv) {
         file.write_recovery();
         file.save();
         std::cout << "Revised node " << id[0] << " in " << argv[2] << '\n';
+        return 0;
+    }
+    if (action == "--place-prefab" && argc == 7) {
+        EditorFile file(argv[2]);
+        auto& document = file.document();
+        const auto prefab = load_prefab(argv[3]);
+        const Vec3 offset{number<float>(argv[4]),number<float>(argv[5]),number<float>(argv[6])};
+        document.apply(instantiate_prefab(prefab.scene,document.allocate_id(),offset));
+        file.write_recovery();
+        file.save();
+        return 0;
+    }
+    if (action == "--derive-prefab" && argc == 4) {
+        derive_prefab(argv[2],argv[3]);
+        return 0;
+    }
+    if (action == "--set-prefab-field" && argc == 6) {
+        change_prefab(argv[2],number<SceneId>(argv[3]),argv[4],std::string(argv[5]));
+        return 0;
+    }
+    if (action == "--clear-prefab-field" && argc == 5) {
+        change_prefab(argv[2],number<SceneId>(argv[3]),argv[4],{});
         return 0;
     }
     if (action == "--set-mesh" && argc == 5) {

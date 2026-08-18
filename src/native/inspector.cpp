@@ -1,4 +1,5 @@
 #include "inspector.hpp"
+#include "emberfall/prefab.hpp"
 
 #include <iomanip>
 #include <ranges>
@@ -80,7 +81,9 @@ AssetLinks load_asset_links(const std::filesystem::path& scene) {
         } else if (kind=="mesh-buffer" || kind=="mesh-image") {
             edges.emplace(source,value);
         } else if (kind=="place" && source==scene.filename()) {
-            result.placed_prefabs.push_back(value);
+            if (!std::string_view(value).contains('/') && !std::string_view(value).contains('\\')) {
+                result.placed_prefabs.try_emplace(value);
+            }
         }
     }
     for (auto& [name, model] : result.models) {
@@ -88,9 +91,13 @@ AssetLinks load_asset_links(const std::filesystem::path& scene) {
         const auto [first,last] = edges.equal_range(model.source);
         for (auto edge=first; edge!=last; ++edge) model.inputs.push_back(edge->second);
     }
-    std::ranges::sort(result.placed_prefabs);
-    const auto end = std::ranges::unique(result.placed_prefabs).begin();
-    result.placed_prefabs.erase(end,result.placed_prefabs.end());
+    for (auto& [prefab,sources] : result.placed_prefabs) {
+        try {
+            sources = load_prefab(scene.parent_path()/prefab).sources;
+        } catch (const std::exception&) {
+            sources.clear();
+        }
+    }
     return result;
 }
 
@@ -156,7 +163,7 @@ void paint_physics_inspector(Canvas& canvas,const Game* game,std::size_t drawn) 
 }
 
 void paint_asset_inspector(Canvas& canvas,const AssetLinks& links,std::string_view name,const MeshAsset* mesh) {
-    const auto x = card(canvas,"ASSET DEPENDENCIES",240);
+    const auto x = card(canvas,"ASSET DEPENDENCIES",254);
     const auto model = links.models.find(name);
     canvas.text(x,86,1.18f,name.empty() ? "NO MODEL SELECTED" : name,text);
     float y = 102;
@@ -178,9 +185,16 @@ void paint_asset_inspector(Canvas& canvas,const AssetLinks& links,std::string_vi
     }
     canvas.text(x,y+6,1.15f,"COOKED SCENE PREFABS",label);
     y += 23;
-    for (const auto& prefab : links.placed_prefabs | std::views::take(3)) {
+    for (const auto& [prefab,sources] : links.placed_prefabs | std::views::take(2)) {
         canvas.text(x+8,y,1.08f,prefab,text);
-        y += 14;
+        y += 12;
+        if (sources.size()>1) {
+            canvas.text(x+14,y,1.00f,"BASE "+sources[1],muted);
+            y += 12;
+        } else if (sources.empty()) {
+            canvas.text(x+14,y,1.00f,"UNRESOLVED",amber);
+            y += 12;
+        }
     }
 }
 

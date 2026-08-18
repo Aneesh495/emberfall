@@ -96,6 +96,14 @@ def load_catalog(source):
 def cook(source, target, tool):
     target.mkdir(parents=True, exist_ok=True)
     assets, placements, mesh_inputs = load_catalog(source)
+    prefab_sources = {}
+    for name in sorted({row[1] for row in placements}):
+        chain = subprocess.check_output([str(tool), "prefab-dependencies", source / name], text=True, timeout=15).splitlines()
+        if not chain or len(chain) > 8 or chain[0] != name or len(set(chain)) != len(chain):
+            raise ValueError(f"Invalid prefab lineage: {name}")
+        if any(assets.get(dependency, {}).get("kind") != "prefab" for dependency in chain):
+            raise ValueError(f"Uncataloged prefab base: {name}")
+        prefab_sources[name] = chain
     tool_hash = digest(bounded(tool, 64_000_000))
     importer_hash = digest(Path(gltf_import.__file__).read_bytes() + Path(texture_cook.__file__).read_bytes())
     recipe_hash = digest(Path(__file__).read_bytes())
@@ -120,7 +128,8 @@ def cook(source, target, tool):
                 continue
             uses = [row[1:] for row in placements if row[0] == name] if kind == "scene" else []
             dependencies = mesh_inputs.get(name, [])
-            dep_names = sorted({name, *(item for _, item in dependencies), *(item[0] for item in uses)})
+            prefab_chain = {dependency for item in uses for dependency in prefab_sources[item[0]]}
+            dep_names = sorted({name, *(item for _, item in dependencies), *prefab_chain})
             output = name if kind == "scene" else Path(name).stem + ".mesh"
             if output in new_cache:
                 raise ValueError(f"Duplicate cooked output: {output}")

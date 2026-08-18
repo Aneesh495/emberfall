@@ -6,7 +6,15 @@ Choose an inspector row and press Enter or double-click to enter a replacement v
 
 Ctrl or Command with S saves the scene. Ctrl or Command with Z undoes a transaction, and Shift adds redo. F5 starts or stops play in a separate world. F6 pauses the play world, and F7 runs a single tick when paused.
 
-Ctrl or Command with P saves the selection as a local prefab. Include every referenced parent and circuit source in the selection. V cycles the prefab browser, and I instantiates the current prefab with remapped IDs. A catalog placement can bind a prefab to a stable scene ID range so future cooking tracks the source dependency.
+Ctrl or Command with P saves the selection as a local prefab. Include every referenced parent and circuit source in the selection. V cycles the prefab browser, and I instantiates the current prefab with remapped IDs. A catalog placement binds a prefab to a stable scene ID range and tracks all ancestor sources. A variant inherits its base prefab's local IDs and may replace selected fields. Press I to place a resolved variant, or run the same placement transaction from the editor command line.
+
+```sh
+build/emberfall-editor --derive-prefab assets/levels/variant.prefab relay-stanchion.prefab
+build/emberfall-editor --set-prefab-field assets/levels/variant.prefab 3 color "0.18 0.60 0.81"
+build/emberfall-editor --place-prefab /path/to/workroom.scene assets/levels/variant.prefab 3 0 -1
+```
+
+`--clear-prefab-field` restores inheritance for that local node and field. Existing placed copies remain ordinary scene nodes. Catalog placements resolve from their source on each affected cook.
 
 ```sh
 make cook

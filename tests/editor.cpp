@@ -1,4 +1,5 @@
 #include "emberfall/editor.hpp"
+#include "emberfall/prefab.hpp"
 
 #include <random>
 #include <stdexcept>
@@ -49,4 +50,42 @@ int main(int argc,char** argv) {
         if (editor.document().dirty()) throw std::runtime_error("Saved editor still dirty");
     }
     std::filesystem::remove(temporary);
+
+    const auto folder = std::filesystem::temp_directory_path()/("ember-prefab-"+std::to_string(getpid()));
+    std::filesystem::create_directory(folder);
+    struct RemoveFixture {
+        std::filesystem::path path;
+        ~RemoveFixture() { std::error_code error; std::filesystem::remove_all(path,error); }
+    } remove{folder};
+    Scene base{"Prefab test","Exercise nested overrides",{}};
+    base.nodes.emplace(1,Node{.id=1,.kind=Kind::decor,.name="Base"});
+    base.nodes.emplace(2,Node{.id=2,.parent=1,.kind=Kind::decor,.name="Child"});
+    write_atomic(folder/"base.prefab",write_scene(base));
+    const auto middle = folder/"middle.prefab";
+    const auto leaf = folder/"leaf.prefab";
+    derive_prefab(middle,"base.prefab");
+    change_prefab(middle,2,"parameter","3.25");
+    change_prefab(middle,1,"color","0.1 0.2 0.3");
+    derive_prefab(leaf,"middle.prefab");
+    change_prefab(leaf,1,"color","0.7 0.8 0.9");
+    const auto resolved = load_prefab(leaf);
+    if (resolved.sources != std::vector<std::string>{"leaf.prefab","middle.prefab","base.prefab"} ||
+        resolved.scene.nodes.at(2).parameter != 3.25f || resolved.scene.nodes.at(1).color != Vec3{0.7f,0.8f,0.9f}) {
+        throw std::runtime_error("Prefab inheritance lost a field");
+    }
+    change_prefab(leaf,1,"color",{});
+    if (load_prefab(leaf).scene.nodes.at(1).color != Vec3{0.1f,0.2f,0.3f}) {
+        throw std::runtime_error("Cleared override did not recover inherited field");
+    }
+    const auto good = read_bounded(leaf,4096);
+    rejected = false;
+    try { change_prefab(leaf,2,"size","0 0 0"); }
+    catch (const std::runtime_error&) { rejected = true; }
+    if (!rejected || read_bounded(leaf,4096)!=good) throw std::runtime_error("Invalid override published");
+    SceneDocument workshop(original);
+    const auto root = workshop.allocate_id();
+    workshop.apply(instantiate_prefab(resolved.scene,root,{3,0,-1}));
+    if (workshop.scene().nodes.at(root+1).parent!=root || !workshop.undo() ||
+        write_scene(workshop.scene())!=bytes || !workshop.redo() ||
+        workshop.scene().nodes.at(root).position!=Vec3{3,0,-1}) throw std::runtime_error("Prefab placement transaction failed");
 }

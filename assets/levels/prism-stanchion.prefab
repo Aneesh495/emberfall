@@ -1,0 +1,4 @@
+ember-prefab 2
+base "relay-stanchion.prefab"
+set 3 color "0.18 0.60 0.81"
+set 3 parameter "2.2"

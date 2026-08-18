@@ -17,7 +17,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_library(emberfall_core
-    src/math.cpp src/scene.cpp src/files.cpp src/collision.cpp src/mesh.cpp src/lighting.cpp
+    src/math.cpp src/scene.cpp src/prefab.cpp src/files.cpp src/collision.cpp src/mesh.cpp src/lighting.cpp
     src/convex.cpp src/convex_contact.cpp src/shadow.cpp
     src/game.cpp src/campaign.cpp src/editor.cpp src/net_protocol.cpp
     src/net_session.cpp src/scheduler.cpp src/replay.cpp src/dynamics.cpp

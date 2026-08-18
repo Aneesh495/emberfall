@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import struct
 import sys
@@ -37,6 +38,22 @@ with tempfile.TemporaryDirectory(prefix="ember-cook-test-") as root:
     prefab = source / "relay-stanchion.prefab"
     prefab.write_text(prefab.read_text().replace("Copper collar", "Copper trim"))
     assert len(cook(source, first)) == 3
+    variant = source / "prism-stanchion.prefab"
+    variant_bytes = variant.read_bytes()
+    variant.write_bytes(variant_bytes.replace(b'0.18 0.60 0.81', b'0.24 0.51 0.86'))
+    assert cook(source, first) == ["02-prism.scene"]
+    cooked = (first / "02-prism.scene").read_text()
+    target = next(shlex.split(row) for row in cooked.splitlines() if row.startswith("node 102 "))
+    assert all(abs(float(actual)-expected) < 1e-6 for actual, expected in zip(target[12:15], (.24, .51, .86)))
+    prefab_manifest = json.loads((first / "manifest.json").read_text())
+    assert {"relay-stanchion.prefab", "prism-stanchion.prefab", "prism-stanchion-amber.prefab"} <= set(
+        prefab_manifest["outputs"]["02-prism.scene"]["dependencies"])
+    before = (first / "manifest.json").read_bytes()
+    variant.write_bytes(variant_bytes.replace(b'relay-stanchion.prefab', b'prism-stanchion-amber.prefab'))
+    cook(source, first, succeeds=False)
+    assert (first / "manifest.json").read_bytes() == before
+    variant.write_bytes(variant_bytes)
+    assert cook(source, first) == ["02-prism.scene"]
     gltf = source / "prism-monitor.gltf"
     model = json.loads(gltf.read_text())
     data = base64.b64decode(model["buffers"][0]["uri"].split(",",1)[1])

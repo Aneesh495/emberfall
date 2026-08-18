@@ -1,5 +1,6 @@
 #include "emberfall/editor.hpp"
 #include "emberfall/replay.hpp"
+#include "emberfall/prefab.hpp"
 
 #include <charconv>
 #include <iostream>
@@ -21,12 +22,16 @@ int main(int argc,char** argv) {
         if (argc >= 4 && std::string_view(argv[1]) == "compose" && (argc-4)%5 == 0) {
             ember::SceneDocument document(ember::load_scene(argv[2]));
             for (int i=4; i<argc; i+=5) {
-                const auto prefab = ember::load_scene(argv[i]);
-                document.apply(ember::instantiate_prefab(prefab,number<ember::SceneId>(argv[i+1]),
+                const auto prefab = ember::load_prefab(argv[i]);
+                document.apply(ember::instantiate_prefab(prefab.scene,number<ember::SceneId>(argv[i+1]),
                     {number<float>(argv[i+2]),number<float>(argv[i+3]),number<float>(argv[i+4])}));
             }
             const ember::Game validated(document.scene());
             ember::write_atomic(argv[3],ember::write_scene(document.scene()));
+            return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "prefab-dependencies") {
+            for (const auto& source : ember::load_prefab(argv[2]).sources) std::cout << source << '\n';
             return 0;
         }
         if (argc == 3 && std::string_view(argv[1]) == "mesh-references") {

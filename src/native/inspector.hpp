@@ -12,7 +12,7 @@ struct AssetLinks {
         std::vector<std::string> inputs;
     };
     std::map<std::string,Model,std::less<>> models;
-    std::vector<std::string> placed_prefabs;
+    std::map<std::string,std::vector<std::string>,std::less<>> placed_prefabs;
 };
 
 AssetLinks load_asset_links(const std::filesystem::path& scene);
