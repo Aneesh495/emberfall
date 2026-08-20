@@ -25,8 +25,9 @@ public:
     SceneId allocate_id() const;
     std::unique_ptr<Game> play(std::shared_ptr<const MeshLibrary> assets = {}) const;
 private:
-    Scene make_candidate(const std::vector<Edit>& edits, bool backwards) const;
-    Scene scene_, saved_;
+    friend class EditorFile;
+    static Scene make_candidate(const Scene& base,const std::vector<Edit>& edits,bool backwards);
+    Scene scene_, saved_, history_base_;
     std::vector<std::vector<Edit>> history_;
     std::size_t cursor_{};
 };

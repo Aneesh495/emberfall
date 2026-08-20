@@ -31,7 +31,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E25 | Bounded procedural stereo cues with attenuation, panning and persisted volume. Streamed audio assets, bus mixing and occlusion remain. [Audio](../src/native/audio.cpp) |
 | E26 | Title, pause, settings and ending UI with keyboard and gamepad mapping, text feedback and high contrast. [Native UI](../src/native/game_main.cpp) |
 | E27 | Native viewport, picking, inspector, node list, prefab browser, multi-selection and translation gizmos. Rotation and scale gizmos remain. [Workshop](../src/native/editor_main.cpp) |
-| E28 | Validated grouped node edits, undo, redo and flattened crash recovery. Serialization of full historical command stacks remains. [Editor history test](../tests/editor.cpp) |
+| E28 | Validated grouped node edits, serialized before/after commands, undo cursor and redo recovery. Journals over the bounded budget retain a snapshot. [Editor history test](../tests/editor.cpp) |
 | E29 | Separate play world with stop, pause and single-step. [Workshop](../src/native/editor_main.cpp) |
 | E30 | Prefab creation, remapped instantiation, dirty state, recovery and content validation. Drag-and-drop prefab overrides remain. [Prefab implementation](../src/editor.cpp) |
 | E31 | Versioned UDP packets, sequence/acknowledgement window, bounded handshake retries and fragment reassembly. Adaptive congestion control remains. [UDP session](../src/net_session.cpp) |

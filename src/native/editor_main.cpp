@@ -149,7 +149,7 @@ Editor::Editor(Options options)
     : options_(std::move(options)), platform_("Emberfall Scene Editor",1190,700,false),
       renderer_(platform_.window(),options_.shaders,options_.validation), file_(options_.file) {
     refresh_assets();
-    if (file_.recovered()) status_ = "Recovered unsaved changes";
+    if (file_.recovered()) status_ = "Recovered edit history";
     refresh_meshes();
     if (options_.start_play) play_ = file_.document().play(mesh_library_);
 }

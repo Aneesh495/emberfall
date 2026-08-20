@@ -22,6 +22,6 @@ The full invocation currently exits nonzero and writes its blocked prerequisites
 
 ## Recover local state
 
-The editor saves a same-directory journal after a committed edit and restores it only when the base fingerprint matches. If the base changed, copy the scene and journal to a recovery directory before inspecting or reconciling either file. Saving deletes the journal after the scene has been published.
+The editor saves a same-directory journal after a committed edit. A version 2 journal stores a bounded baseline scene, before and after node records, and the current cursor. Recovery verifies the base fingerprint and journal checksum, then revalidates each transaction before restoring undo and redo. The editor can also reopen version 1 snapshot journals. If the command journal reaches 16 MiB, recovery falls back to a version 1 snapshot and preserves the edited scene. If the base changed, copy the scene and journal to a recovery directory before inspecting or reconciling either file. Saving deletes the journal after the scene has been published.
 
 The game reads `settings.save` and `campaign.save` from its profile. Use a fresh `--profile` directory for diagnostics. A rejected progress record remains available to inspect. Starting a new expedition and saving a new checkpoint writes the current schema.

@@ -1,4 +1,4 @@
-#include "emberfall/scene.hpp"
+#include "scene_records.hpp"
 
 #include <array>
 #include <iomanip>
@@ -41,6 +41,24 @@ bool linked(Kind kind) {
     return kind == Kind::door || kind == Kind::platform || kind == Kind::mirror || kind == Kind::exit;
 }
 
+}
+
+Node scene_records::read_node(std::istream& input,unsigned number) {
+    Node node;
+    std::string kind;
+    input >> node.id >> node.parent >> kind >> std::quoted(node.name)
+          >> node.position >> node.size >> node.yaw >> node.color >> node.link >> node.destination >> node.parameter;
+    const auto found = std::ranges::find(kinds,kind);
+    if (found==kinds.end()) invalid("unknown node kind on line "+std::to_string(number));
+    if (!input) invalid("malformed node on line "+std::to_string(number));
+    node.kind = static_cast<Kind>(found-kinds.begin());
+    return node;
+}
+
+void scene_records::write_node(std::ostream& output,const Node& node) {
+    output << node.id << ' ' << node.parent << ' ' << kind_name(node.kind) << ' ' << std::quoted(node.name)
+           << ' ' << node.position << ' ' << node.size << ' ' << node.yaw << ' ' << node.color
+           << ' ' << node.link << ' ' << node.destination << ' ' << node.parameter;
 }
 
 bool valid_mesh_name(std::string_view name) {
@@ -143,14 +161,8 @@ Scene parse_scene(std::string_view bytes) {
             seen_objective = true;
         } else if (type == "node") {
             if (scene.nodes.size() == node_limit) invalid("node limit");
-            Node n;
-            std::string kind;
-            line >> n.id >> n.parent >> kind >> std::quoted(n.name)
-                 >> n.position >> n.size >> n.yaw >> n.color >> n.link >> n.destination >> n.parameter;
-            const auto found = std::ranges::find(kinds, kind);
-            if (found == kinds.end()) invalid("unknown node kind on line " + std::to_string(number));
-            n.kind = static_cast<Kind>(found - kinds.begin());
-            if (!scene.nodes.emplace(n.id, n).second) invalid("duplicate node ID");
+            auto node = scene_records::read_node(line,number);
+            if (!scene.nodes.emplace(node.id,std::move(node)).second) invalid("duplicate node ID");
         } else if (type == "model") {
             SceneId id{};
             std::string asset;
@@ -184,9 +196,9 @@ std::string write_scene(const Scene& scene) {
     out << "ember-scene 1\ntitle " << std::quoted(scene.title)
         << "\nobjective " << std::quoted(scene.objective) << '\n';
     for (const auto& [id,n] : scene.nodes) {
-        out << "node " << id << ' ' << n.parent << ' ' << kind_name(n.kind) << ' ' << std::quoted(n.name)
-            << ' ' << n.position << ' ' << n.size << ' ' << n.yaw << ' ' << n.color
-            << ' ' << n.link << ' ' << n.destination << ' ' << n.parameter << '\n';
+        out << "node ";
+        scene_records::write_node(out,n);
+        out << '\n';
         if (!n.mesh.empty()) out << "model " << id << ' ' << n.mesh << '\n';
     }
     return out.str();

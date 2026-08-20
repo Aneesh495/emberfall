@@ -30,4 +30,4 @@ make editor SCENE=assets/levels/02-prism.scene ARGS="--inspect frame"
 make editor SCENE=assets/levels/02-prism.scene ARGS="--play --inspect physics"
 ```
 
-A dirty scene is recoverable through its adjacent `.scene.recover` file. A matching base fingerprint is required to restore it. Keep both files when inspecting a recovery conflict.
+An interrupted edit session is recoverable through its adjacent `.scene.recover` file. The editor verifies the disk scene fingerprint and journal checksum, then restores the retained command list and undo cursor. Keep both files when inspecting a recovery conflict.

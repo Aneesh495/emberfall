@@ -1,4 +1,5 @@
 #include "emberfall/editor.hpp"
+#include "emberfall/campaign.hpp"
 #include "emberfall/prefab.hpp"
 
 #include <random>
@@ -38,6 +39,8 @@ int main(int argc,char** argv) {
     {
         EditorFile editor(temporary);
         editor.document().apply(shift_nodes(original,std::span(candidates).first(1),{1,0,0}));
+        editor.document().apply(shift_nodes(editor.document().scene(),std::span(candidates).first(1),{2,0,0}));
+        if (!editor.document().undo()) throw std::runtime_error("Could not prepare redo journal");
         editor.write_recovery();
     }
     {
@@ -46,9 +49,38 @@ int main(int argc,char** argv) {
             editor.document().scene().nodes.at(20).position.x != original.nodes.at(20).position.x+1) {
             throw std::runtime_error("Recovery did not restore dirty edit");
         }
+        auto& history = editor.document();
+        if (history.history_size()!=2 || history.cursor()!=1 || !history.redo() ||
+            history.scene().nodes.at(20).position.x!=original.nodes.at(20).position.x+3 ||
+            !history.undo() || !history.undo() || write_scene(history.scene())!=bytes || !history.redo()) {
+            throw std::runtime_error("Recovered journal did not preserve undo and redo");
+        }
         editor.save();
         if (editor.document().dirty()) throw std::runtime_error("Saved editor still dirty");
     }
+    const auto journal = std::filesystem::path(temporary.string()+".recover");
+    const auto saved = load_scene(temporary);
+    {
+        EditorFile editor(temporary);
+        editor.document().apply(shift_nodes(saved,std::span(candidates).first(1),{0.5f,0,0}));
+        editor.write_recovery();
+    }
+    auto corrupt = read_bounded(journal,64'000);
+    corrupt.back() = 'X';
+    write_atomic(journal,corrupt);
+    rejected = false;
+    try { const EditorFile invalid(temporary); }
+    catch (const std::runtime_error&) { rejected = true; }
+    if (!rejected || load_scene(temporary)!=saved) throw std::runtime_error("Corrupt journal replaced saved state");
+    auto migrated = saved;
+    migrated.nodes.at(20).position.x += 0.5f;
+    write_atomic(journal,"ember-recovery 1 "+std::to_string(fingerprint(write_scene(saved)))+"\n"+write_scene(migrated));
+    {
+        EditorFile editor(temporary);
+        if (!editor.recovered() || editor.document().scene()!=migrated || !editor.document().undo() ||
+            editor.document().scene()!=saved) throw std::runtime_error("Legacy recovery migration failed");
+    }
+    std::filesystem::remove(journal);
     std::filesystem::remove(temporary);
 
     const auto folder = std::filesystem::temp_directory_path()/("ember-prefab-"+std::to_string(getpid()));
@@ -76,6 +108,25 @@ int main(int argc,char** argv) {
     change_prefab(leaf,1,"color",{});
     if (load_prefab(leaf).scene.nodes.at(1).color != Vec3{0.1f,0.2f,0.3f}) {
         throw std::runtime_error("Cleared override did not recover inherited field");
+    }
+    const auto limit_scene = folder/"limit.scene";
+    write_atomic(limit_scene,write_scene(base));
+    {
+        EditorFile editor(limit_scene);
+        const std::array ids{SceneId{1}};
+        for (int i=0; i<2050; ++i) {
+            editor.document().apply(shift_nodes(editor.document().scene(),ids,{0.125f,0,0}));
+        }
+        editor.write_recovery();
+    }
+    {
+        EditorFile editor(limit_scene);
+        auto& history = editor.document();
+        if (history.history_size()!=2048 || history.cursor()!=2048) throw std::runtime_error("Recovery history cap");
+        while (history.undo()) {}
+        if (history.scene().nodes.at(1).position.x!=0.25f) throw std::runtime_error("Evicted history root was stale");
+        while (history.redo()) {}
+        if (history.scene().nodes.at(1).position.x!=256.25f) throw std::runtime_error("Redo after history eviction");
     }
     const auto good = read_bounded(leaf,4096);
     rejected = false;

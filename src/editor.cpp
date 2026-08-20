@@ -1,14 +1,56 @@
 #include "emberfall/editor.hpp"
 
 #include "emberfall/campaign.hpp"
+#include "scene_records.hpp"
 
+#include <iomanip>
 #include <limits>
+#include <locale>
+#include <sstream>
 #include <set>
 
 namespace ember {
 namespace {
 
 constexpr std::size_t history_limit = 2048;
+constexpr std::size_t journal_limit = 16*1024*1024, root_limit = 2'000'000, transaction_limit = 16'384;
+
+void end_row(std::istream& row) {
+    if (!row || (row >> std::ws, !row.eof())) throw std::runtime_error("Malformed recovery journal record");
+}
+
+std::string_view line(std::string_view& bytes) {
+    const auto end = bytes.find('\n');
+    if (end==std::string_view::npos || end>1024) throw std::runtime_error("Truncated or oversized recovery journal record");
+    const auto value = bytes.substr(0,end);
+    bytes.remove_prefix(end+1);
+    return value;
+}
+
+std::optional<Node> recovery_node(std::string_view& payload,unsigned index) {
+    std::istringstream row{std::string(line(payload))};
+    row.imbue(std::locale::classic());
+    int present{};
+    if (!(row >> present) || (present!=0 && present!=1)) throw std::runtime_error("Invalid recovery node marker");
+    std::optional<Node> node;
+    if (present) {
+        node = scene_records::read_node(row,index);
+        row >> std::ws;
+        if (row.peek()!='"' || !(row >> std::quoted(node->mesh))) throw std::runtime_error("Invalid recovery mesh field");
+    }
+    end_row(row);
+    return node;
+}
+
+void write_recovery_node(std::ostream& row,const std::optional<Node>& node) {
+    if (!node) {
+        row << "0\n";
+        return;
+    }
+    row << "1 ";
+    scene_records::write_node(row,*node);
+    row << ' ' << std::quoted(node->mesh) << '\n';
+}
 
 SceneId identity(const Edit& edit) {
     if (!edit.before && !edit.after) throw std::runtime_error("Empty edit");
@@ -33,13 +75,13 @@ std::vector<Edit> difference(const Scene& base, const Scene& revision) {
 
 }
 
-SceneDocument::SceneDocument(Scene scene) : scene_(std::move(scene)), saved_(scene_) {
+SceneDocument::SceneDocument(Scene scene) : scene_(std::move(scene)), saved_(scene_), history_base_(scene_) {
     validate_scene(scene_);
     history_.reserve(history_limit);
 }
 
-Scene SceneDocument::make_candidate(const std::vector<Edit>& edits, bool backwards) const {
-    Scene updated = scene_;
+Scene SceneDocument::make_candidate(const Scene& base,const std::vector<Edit>& edits,bool backwards) {
+    Scene updated = base;
     std::set<SceneId> touched;
     for (const auto& edit : edits) {
         const auto id = identity(edit);
@@ -61,9 +103,13 @@ Scene SceneDocument::make_candidate(const std::vector<Edit>& edits, bool backwar
 void SceneDocument::apply(std::vector<Edit> transaction) {
     std::erase_if(transaction, [](const auto& edit) { return edit.before == edit.after; });
     if (transaction.empty()) return;
-    auto updated = make_candidate(transaction,false);
-    history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(cursor_),history_.end());
-    if (history_.size() == history_limit) history_.erase(history_.begin());
+    if (transaction.size()>transaction_limit) throw std::runtime_error("Edit transaction node limit");
+    auto updated = make_candidate(scene_,transaction,false);
+    if (cursor_==history_limit) {
+        auto base = make_candidate(history_base_,history_.front(),false);
+        history_.erase(history_.begin());
+        history_base_ = std::move(base);
+    } else history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(cursor_),history_.end());
     history_.push_back(std::move(transaction));
     scene_ = std::move(updated);
     cursor_ = history_.size();
@@ -71,14 +117,14 @@ void SceneDocument::apply(std::vector<Edit> transaction) {
 
 bool SceneDocument::undo() {
     if (!cursor_) return false;
-    scene_ = make_candidate(history_.at(cursor_-1),true);
+    scene_ = make_candidate(scene_,history_.at(cursor_-1),true);
     --cursor_;
     return true;
 }
 
 bool SceneDocument::redo() {
     if (cursor_ == history_.size()) return false;
-    scene_ = make_candidate(history_.at(cursor_),false);
+    scene_ = make_candidate(scene_,history_.at(cursor_),false);
     ++cursor_;
     return true;
 }
@@ -98,20 +144,68 @@ std::unique_ptr<Game> SceneDocument::play(std::shared_ptr<const MeshLibrary> ass
 
 SceneDocument EditorFile::recover(const std::filesystem::path& path, const std::filesystem::path& journal,
                                   std::uint64_t& base, bool& recovered) {
-    auto scene = load_scene(path);
-    base = fingerprint(write_scene(scene));
-    SceneDocument document(std::move(scene));
-    if (!std::filesystem::exists(journal)) return document;
-    const auto bytes = read_bounded(journal,2'001'000);
-    const auto split = bytes.find('\n');
-    if (split == std::string::npos || bytes.substr(0,split) != "ember-recovery 1 " + std::to_string(base)) {
-        throw std::runtime_error("Recovery base mismatch. Inspect " + journal.string());
+    auto saved = load_scene(path);
+    base = fingerprint(write_scene(saved));
+    if (!std::filesystem::exists(journal)) return SceneDocument(std::move(saved));
+    const auto bytes = read_bounded(journal,journal_limit);
+    std::string_view payload = bytes;
+    std::istringstream header{std::string(line(payload))};
+    std::string marker;
+    unsigned version{};
+    std::uint64_t fingerprint_on_disk{};
+    if (!(header >> marker >> version >> fingerprint_on_disk) || marker!="ember-recovery" ||
+        fingerprint_on_disk!=base) throw std::runtime_error("Recovery base mismatch. Inspect "+journal.string());
+    const auto verify_metadata = [&](const Scene& scene) {
+        if (scene.title!=saved.title || scene.objective!=saved.objective) throw std::runtime_error("Recovery changed scene metadata");
+    };
+    if (version==1) {
+        end_row(header);
+        const auto revision = parse_scene(payload);
+        verify_metadata(revision);
+        SceneDocument document(std::move(saved));
+        document.apply(difference(document.scene(),revision));
+        recovered = true;
+        return document;
     }
-    const auto revision = parse_scene(std::string_view(bytes).substr(split+1));
-    if (revision.title != document.scene().title || revision.objective != document.scene().objective) {
-        throw std::runtime_error("Recovery changed unsupported metadata");
+    std::uint64_t checksum{};
+    if (version!=2 || !(header >> checksum) || checksum!=fingerprint(payload)) {
+        throw std::runtime_error("Invalid recovery journal version or checksum");
     }
-    document.apply(difference(document.scene(),revision));
+    end_row(header);
+    std::istringstream settings{std::string(line(payload))};
+    std::size_t cursor{}, count{}, root_bytes{};
+    if (!(settings >> marker >> cursor >> count >> root_bytes) || marker!="history" || cursor>count ||
+        count>history_limit || root_bytes>root_limit || root_bytes>payload.size()) {
+        throw std::runtime_error("Invalid recovery history limits");
+    }
+    end_row(settings);
+    auto root = parse_scene(payload.substr(0,root_bytes));
+    verify_metadata(root);
+    payload.remove_prefix(root_bytes);
+    SceneDocument document(std::move(root));
+    Scene visible;
+    if (!cursor) visible = document.scene();
+    for (std::size_t i=0; i<count; ++i) {
+        std::istringstream record{std::string(line(payload))};
+        std::size_t edits{};
+        if (!(record >> marker >> edits) || marker!="edit" || !edits || edits>transaction_limit) {
+            throw std::runtime_error("Invalid recovery transaction size");
+        }
+        end_row(record);
+        std::vector<Edit> transaction;
+        transaction.reserve(edits);
+        for (std::size_t item=0; item<edits; ++item) {
+            const auto index = static_cast<unsigned>(item+1);
+            transaction.push_back({recovery_node(payload,index),recovery_node(payload,index)});
+        }
+        document.apply(std::move(transaction));
+        if (document.cursor()!=i+1) throw std::runtime_error("Empty recovery transaction");
+        if (document.cursor()==cursor) visible = document.scene();
+    }
+    if (!payload.empty()) throw std::runtime_error("Trailing recovery history bytes");
+    document.scene_ = std::move(visible);
+    document.saved_ = std::move(saved);
+    document.cursor_ = cursor;
     recovered = true;
     return document;
 }
@@ -121,12 +215,32 @@ EditorFile::EditorFile(std::filesystem::path path)
       document_(recover(path_,journal_,base_,recovered_)) {}
 
 void EditorFile::write_recovery() const {
-    if (!document_.dirty()) {
+    if (!document_.dirty() && document_.history_.empty()) {
         std::filesystem::remove(journal_);
         return;
     }
-    const auto bytes = "ember-recovery 1 " + std::to_string(base_) + "\n" + write_scene(document_.scene());
-    write_atomic(journal_,bytes);
+    const auto write_snapshot = [&] {
+        write_atomic(journal_,"ember-recovery 1 "+std::to_string(base_)+"\n"+write_scene(document_.scene()));
+    };
+    const auto root = write_scene(document_.history_base_);
+    std::ostringstream history;
+    history.imbue(std::locale::classic());
+    history << std::setprecision(std::numeric_limits<float>::max_digits10);
+    history << "history " << document_.cursor_ << ' ' << document_.history_.size() << ' ' << root.size() << '\n' << root;
+    for (const auto& transaction : document_.history_) {
+        history << "edit " << transaction.size() << '\n';
+        for (const auto& edit : transaction) {
+            write_recovery_node(history,edit.before);
+            write_recovery_node(history,edit.after);
+            if (history.tellp()>static_cast<std::streamoff>(journal_limit-128)) {
+                write_snapshot();
+                return;
+            }
+        }
+    }
+    const auto payload = std::move(history).str();
+    const auto header = "ember-recovery 2 "+std::to_string(base_)+" "+std::to_string(fingerprint(payload))+"\n";
+    write_atomic(journal_,header+payload);
 }
 
 void EditorFile::save() {
