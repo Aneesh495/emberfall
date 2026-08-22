@@ -62,6 +62,11 @@ def unchanged_material_reload(bundle):
     shutil.copyfile(fixture / "normal.ppm", fixture / "reloaded.ppm")
 
 
+def visible_hidden_effect(bundle):
+    fixture = bundle / "raw" / "effects-fixture"
+    shutil.copyfile(fixture / "burst.ppm", fixture / "occluded.ppm")
+
+
 def wrong_source(bundle):
     for name in ("SOURCE_INPUTS.json", "ACCEPTANCE.json"):
         target = bundle / name
@@ -91,6 +96,7 @@ def main():
             ("missing_gpu_pass", erased_shadow, True, "Missing GPU pass timing"),
             ("missing_temporal_accumulation", erased_history, True, "Temporal accumulation missing"),
             ("stale_material_reload", unchanged_material_reload, True, "Material reload did not replace"),
+            ("effect_ignores_depth", visible_hidden_effect, True, "Opaque geometry failed to occlude effects"),
         ]
     results = []
     for name, mutate, update, expected in controls:

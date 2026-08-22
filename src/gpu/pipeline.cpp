@@ -68,12 +68,13 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     const bool scene = kind == Pipeline::scene;
     const bool overlay = kind == Pipeline::overlay;
     const bool shadow = kind == Pipeline::shadow;
-    Module vertex(device,dir / (shadow ? "shadow.vert.spv" : scene ? "scene.vert.spv" : overlay ? "overlay.vert.spv" : "screen.vert.spv"));
+    const bool effects = kind == Pipeline::effects;
+    Module vertex(device,dir / (shadow ? "shadow.vert.spv" : scene ? "scene.vert.spv" : overlay ? "overlay.vert.spv" : effects ? "effects.vert.spv" : "screen.vert.spv"));
     std::unique_ptr<Module> fragment;
     if (!shadow) {
         const bool temporal = kind == Pipeline::temporal;
         fragment = std::make_unique<Module>(device,dir / (scene ? "scene.frag.spv" : overlay ?
-            "overlay.frag.spv" : temporal ? "temporal.frag.spv" : "tonemap.frag.spv"));
+            "overlay.frag.spv" : temporal ? "temporal.frag.spv" : effects ? "effects.frag.spv" : "tonemap.frag.spv"));
     }
     std::array stages{
         vk<VkPipelineShaderStageCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO),
@@ -143,7 +144,7 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
     auto sampling = vk<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
     sampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     auto testing = vk<VkPipelineDepthStencilStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
-    testing.depthTestEnable = scene || shadow;
+    testing.depthTestEnable = scene || shadow || effects;
     testing.depthWriteEnable = scene || shadow;
     testing.depthCompareOp = VK_COMPARE_OP_LESS;
     VkPipelineColorBlendAttachmentState attachment{};
@@ -156,6 +157,15 @@ VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
         attachment.colorBlendOp = VK_BLEND_OP_ADD;
         attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
+    if (effects) {
+        attachment.blendEnable = VK_TRUE;
+        attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         attachment.alphaBlendOp = VK_BLEND_OP_ADD;
     }
     auto blend = vk<VkPipelineColorBlendStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);

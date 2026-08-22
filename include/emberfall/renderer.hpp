@@ -1,6 +1,6 @@
 #pragma once
 
-#include "emberfall/game.hpp"
+#include "emberfall/effects.hpp"
 
 #include <memory>
 
@@ -47,7 +47,7 @@ struct FrameReport {
     std::uint64_t serial{};
     std::uint32_t shadow_casters{}, lights{}, triangles{}, draw_calls{};
     std::uint64_t timed_serial{};
-    std::array<std::uint64_t,5> timestamps{};
+    std::array<std::uint64_t,6> timestamps{};
     double timestamp_period_ns{};
     unsigned timestamp_valid_bits{};
     std::uint32_t imported_triangles{}, light_tiles{}, tile_light_entries{};
@@ -55,8 +55,9 @@ struct FrameReport {
     std::uint32_t motion_items{}, animated_triangles{};
     bool history_used{};
     std::uint32_t texture_layers{}, uploaded_texture_layers{};
-    std::array<double,4> pass_gpu_ms{};
+    std::array<double,5> pass_gpu_ms{};
     std::uint64_t owned_bytes{};
+    std::uint32_t particles{}, decals{};
 };
 
 class Renderer {
@@ -68,7 +69,8 @@ public:
     void resize();
     void reset_history();
     bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay = {},
-              std::span<const SkinBatch> meshes = {}, std::span<const MeshInstance> imported = {});
+              std::span<const SkinBatch> meshes = {}, std::span<const MeshInstance> imported = {},
+              std::span<const Effect> effects = {});
     void capture_next(std::filesystem::path file);
     const FrameReport& report() const;
     const GraphReport& graph_report() const;

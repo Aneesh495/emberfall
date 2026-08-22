@@ -76,6 +76,7 @@ void Renderer::State::init(SDL_Window* owner, std::filesystem::path path, bool v
     visibility.resize(instance_limit);
     scene_pipeline = gpu::pipeline(device,shaders,scene_layout,hdr_format,depth_format,gpu::Pipeline::scene);
     temporal_pipeline = gpu::pipeline(device,shaders,temporal_layout,hdr_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::temporal);
+    effects_pipeline = gpu::pipeline(device,shaders,effects_layout,hdr_format,depth_format,gpu::Pipeline::effects);
 }
 
 void Renderer::State::create_instance(bool validation) {
@@ -158,7 +159,8 @@ void Renderer::State::create_device() {
         vkGetPhysicalDeviceFormatProperties(adapter,hdr_format,&hdr);
         vkGetPhysicalDeviceFormatProperties(adapter,depth_format,&depth);
         constexpr auto required = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
-                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                  VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
         constexpr auto required_depth = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
         if ((hdr.optimalTilingFeatures & required) != required ||
             (depth.optimalTilingFeatures & required_depth) != required_depth) continue;
@@ -245,9 +247,11 @@ Renderer::State::~State() {
         vkDestroySemaphore(device,timeline,nullptr);
         vkDestroyPipeline(device,scene_pipeline,nullptr);
         vkDestroyPipeline(device,temporal_pipeline,nullptr);
+        vkDestroyPipeline(device,effects_pipeline,nullptr);
         vkDestroyPipeline(device,shadow_pipeline,nullptr);
         vkDestroyPipelineLayout(device,scene_layout,nullptr);
         vkDestroyPipelineLayout(device,temporal_layout,nullptr);
+        vkDestroyPipelineLayout(device,effects_layout,nullptr);
         vkDestroyPipelineLayout(device,shadow_layout,nullptr);
         vkDestroyPipelineLayout(device,tonemap_layout,nullptr);
         vkDestroyPipelineLayout(device,overlay_layout,nullptr);

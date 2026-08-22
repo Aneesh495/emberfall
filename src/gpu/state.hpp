@@ -52,7 +52,7 @@ struct Renderer::State {
         VkQueryPool timer{};
         Buffer instances, overlay, lighting, skin, skin_instances, light_tiles;
         Buffer motions, mesh_motions, texture_staging;
-        Image hdr, depth, shadow, motion, history, textures;
+        Image hdr, depth, shadow, motion, history, textures, effects;
         VkImageView color_textures{};
         std::uint32_t resident_layers{};
         bool textures_initialized{};
@@ -75,7 +75,7 @@ struct Renderer::State {
     void clear_swapchain();
     bool rebuild_swapchain();
     bool draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay,
-              std::span<const SkinBatch> meshes, std::span<const MeshInstance> imported);
+              std::span<const SkinBatch> meshes, std::span<const MeshInstance> imported,std::span<const Effect> effects);
     static constexpr std::size_t skin_vertex_limit = 4096, skin_mesh_limit = 16;
     static constexpr auto uploaded_vertex_limit = skin_vertex_limit+MeshLibrary::vertex_limit;
     static constexpr auto uploaded_mesh_limit = skin_mesh_limit+MeshLibrary::primitive_limit;
@@ -83,7 +83,7 @@ struct Renderer::State {
     struct ShadowDraw { Mat4 projection; std::uint32_t first{}, count{}; };
     void record(Frame& frame, const Frame& previous, Screen& screen, const View& view, const Mat4& camera,
                 bool temporal, bool history, std::uint32_t count, std::uint32_t dirty_layers,
-                std::span<const ShadowDraw> shadows,std::uint32_t overlay_count,std::span<const SkinDraw> meshes);
+                std::span<const ShadowDraw> shadows,std::uint32_t overlay_count,std::span<const SkinDraw> meshes,std::span<const Effect> effects);
     void save_capture();
     void wait(std::uint64_t serial) const;
     void make_image(Image& image, VkFormat format, VkImageUsageFlags use, VkImageAspectFlags aspect,
@@ -115,8 +115,8 @@ struct Renderer::State {
     VkSemaphore timeline{};
     VkDescriptorPool descriptors{};
     VkDescriptorSetLayout sample_layout{}, light_layout{}, resolve_layout{};
-    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{}, shadow_layout{}, temporal_layout{};
-    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{}, temporal_pipeline{};
+    VkPipelineLayout scene_layout{}, tonemap_layout{}, overlay_layout{}, shadow_layout{}, temporal_layout{}, effects_layout{};
+    VkPipeline scene_pipeline{}, tonemap_pipeline{}, overlay_pipeline{}, shadow_pipeline{}, temporal_pipeline{}, effects_pipeline{};
     VkSampler sampler{}, shadow_sampler{}, material_sampler{};
     Scheduler culling{4};
     TileLights tile_lights;

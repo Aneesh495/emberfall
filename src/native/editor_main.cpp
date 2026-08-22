@@ -129,6 +129,7 @@ private:
     Renderer renderer_;
     EditorFile file_;
     std::unique_ptr<Game> play_;
+    Effects effects_;
     std::shared_ptr<const MeshLibrary> mesh_library_;
     Vec3 center_{0,0,0};
     float zoom_{1};
@@ -291,6 +292,7 @@ void Editor::key(const SDL_KeyboardEvent& e) {
         if (play_) play_.reset();
         else play_ = file_.document().play(mesh_library_);
         paused_ = false;
+        effects_.clear();
         renderer_.reset_history();
         status_ = play_ ? "Play world running" : "Returned to edit world";
         return;
@@ -535,7 +537,11 @@ int Editor::run() {
             if (!paused_) time = std::min(time+elapsed,5.0*Game::timestep);
             if (step_) { time = Game::timestep; step_ = false; }
             while (time >= Game::timestep) {
+                effects_.update(Game::timestep);
                 play_->tick({Command{input.movement,jump,interact,input.crouch},{}});
+                for (const auto effect : play_->events()) {
+                    effects_.add(effect,file_.document().scene(),play_->player(0).body.feet,play_->ticks());
+                }
                 jump = interact = false;
                 time -= Game::timestep;
             }
@@ -557,7 +563,7 @@ int Editor::run() {
         const auto actors = play_ ? play_->skin(1) : std::vector<SkinBatch>{};
         const auto models = play_ ? play_->imported_meshes() : std::span<const MeshInstance>(imported);
         viewport.temporal = true;
-        if (renderer_.draw(blocks,viewport,canvas.vertices(),actors,models)) {
+        if (renderer_.draw(blocks,viewport,canvas.vertices(),actors,models,effects_.active())) {
             if (++drawn == options_.frames) break;
         } else SDL_Delay(10);
         if (options_.frames && now > deadline) throw std::runtime_error("Editor diagnostic timed out");

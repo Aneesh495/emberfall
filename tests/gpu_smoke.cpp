@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
             if (pass.name!="OPAQUE HDR") continue;
             for (const auto& image : std::span(pass.images).first(pass.image_count)) {
                 shadow_sample |= image.resource=="SHADOW ATLAS" && image.previous_layout=="DEPTH OUTPUT" &&
-                                 image.layout=="SAMPLED DEPTH" && image.source_access && image.destination_access;
+                                 image.layout=="DEPTH READ ONLY" && image.source_access && image.destination_access;
             }
         }
         if (!shadow_sample || graph.passes.at(graph.pass_count-1).name!="PRESENT" || !report.owned_bytes) {

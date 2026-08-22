@@ -38,8 +38,9 @@ VkRenderingAttachmentInfo color_attachment(VkImageView view, std::array<float,4>
 
 }
 
-bool Renderer::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes, std::span<const MeshInstance> imported) {
-    return state_->draw(items,view,overlay,meshes,imported);
+bool Renderer::draw(std::span<const RenderItem> items,const View& view,std::span<const OverlayVertex> overlay,
+                    std::span<const SkinBatch> meshes,std::span<const MeshInstance> imported,std::span<const Effect> effects) {
+    return state_->draw(items,view,overlay,meshes,imported,effects);
 }
 
 void Renderer::reset_history() { state_->history_active = false; }
@@ -58,13 +59,13 @@ void Renderer::State::wait(std::uint64_t value) const {
 void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen, const View& view,
                              const Mat4& camera, bool temporal, bool history, std::uint32_t count,
                              std::uint32_t dirty_layers,std::span<const ShadowDraw> shadows,
-                             std::uint32_t overlay_count,std::span<const SkinDraw> meshes) {
+                             std::uint32_t overlay_count,std::span<const SkinDraw> meshes,std::span<const Effect> effects) {
     const auto cmd = frame.commands;
     auto begin = vk<VkCommandBufferBeginInfo>(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(cmd,&begin),"Begin recording frame");
     if (frame.timer) {
-        vkCmdResetQueryPool(cmd,frame.timer,0,5);
+        vkCmdResetQueryPool(cmd,frame.timer,0,6);
         vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,frame.timer,0);
     }
     const VkDeviceSize mesh_offset = view.dense_mesh ? 36*sizeof(gpu::Vertex) : 0;
@@ -86,6 +87,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     gpu::Resource shadow{frame.shadow.image,VK_IMAGE_ASPECT_DEPTH_BIT};
     gpu::Resource motion{frame.motion.image,VK_IMAGE_ASPECT_COLOR_BIT};
     gpu::Resource resolved{frame.history.image,VK_IMAGE_ASPECT_COLOR_BIT};
+    gpu::Resource effect_color{frame.effects.image,VK_IMAGE_ASPECT_COLOR_BIT};
     if (frame.history_written) resolved = sampled_image(frame.history.image);
     if (frame.motion_sampled) motion = sampled_image(frame.motion.image);
     else if (frame.attachments_written) {
@@ -95,9 +97,10 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     // Reusing a slot also needs a queue execution dependency across submissions.
     if (frame.attachments_written) {
         hdr = sampled_image(frame.hdr.image);
-        depth = {frame.depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        effect_color = sampled_image(frame.effects.image);
+        depth = {frame.depth.image,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT};
     }
     if (frame.shadow_written) {
         shadow = {frame.shadow.image,VK_IMAGE_ASPECT_DEPTH_BIT,VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
@@ -111,6 +114,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
     shadow.label = "SHADOW ATLAS";
     motion.label = "MOTION AND DEPTH";
     resolved.label = "CURRENT HISTORY";
+    effect_color.label = "EFFECT HDR";
     backbuffer.label = "SWAPCHAIN";
     const gpu::RenderGraph graph(cmd,graph_trace);
     gpu::Resource textures{frame.textures.image,VK_IMAGE_ASPECT_COLOR_BIT};
@@ -184,7 +188,7 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
         depth_attachment.imageView = frame.depth.view;
         depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth_attachment.clearValue.depthStencil.depth = 1;
         auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
         rendering.renderArea = rect;
@@ -237,9 +241,46 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
         }
     }
     if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,3);
+    graph.pass("ADDITIVE EFFECTS",{{effect_color,gpu::ImageUse::hdr_output},{depth,gpu::ImageUse::depth_input}},[&] {
+        const auto color = color_attachment(frame.effects.view,{0,0,0,0});
+        auto opaque_depth = vk<VkRenderingAttachmentInfo>(VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
+        opaque_depth.imageView = frame.depth.view;
+        opaque_depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+        opaque_depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        opaque_depth.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
+        auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
+        rendering.renderArea = rect;
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &opaque_depth;
+        vkCmdBeginRendering(cmd,&rendering);
+        if (!effects.empty()) {
+            vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,effects_pipeline);
+            const float cotangent = 1/std::tan(view.fov*0.5f);
+            const float aspect = static_cast<float>(extent.width)/static_cast<float>(extent.height);
+            struct Emitter {
+                Mat4 camera;
+                std::array<float,4> position_age, color_radius;
+                std::array<float,2> projection;
+                std::uint32_t seed, kind;
+            };
+            static_assert(sizeof(Emitter)==112);
+            for (const auto& effect : effects) {
+                const Emitter emitter{camera,{effect.position.x,effect.position.y,effect.position.z,effect.age},
+                    {effect.radiance.x,effect.radiance.y,effect.radiance.z,effect.radius},
+                    {cotangent/aspect,-cotangent},effect.seed,static_cast<std::uint32_t>(effect.kind)};
+                vkCmdPushConstants(cmd,effects_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(Emitter),&emitter);
+                vkCmdDraw(cmd,6,effect.kind==EffectKind::burst ? 24U : 1U,0,0);
+            }
+        }
+        vkCmdEndRendering(cmd);
+    });
+    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,4);
     auto& display_image = temporal ? resolved : hdr;
     const auto display_set = temporal ? frame.history_sample : frame.sample;
-    graph.pass("DISPLAY AND OVERLAY",{{display_image,gpu::ImageUse::sampled},{backbuffer,gpu::ImageUse::hdr_output}},[&] {
+    graph.pass("DISPLAY AND OVERLAY",{{display_image,gpu::ImageUse::sampled},{effect_color,gpu::ImageUse::sampled},
+                                      {backbuffer,gpu::ImageUse::hdr_output}},[&] {
         auto color = color_attachment(screen.view,{0,0,0,1});
         auto rendering = vk<VkRenderingInfo>(VK_STRUCTURE_TYPE_RENDERING_INFO);
         rendering.renderArea = rect;
@@ -289,11 +330,25 @@ void Renderer::State::record(Frame& frame, const Frame& previous, Screen& screen
         });
     }
     graph.pass("PRESENT",{{backbuffer,gpu::ImageUse::present}},[]{});
-    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,4);
+    if (frame.timer) vkCmdWriteTimestamp2(cmd,VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,frame.timer,5);
     check(vkEndCommandBuffer(cmd),"Finish recording frame");
 }
 
-bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, std::span<const OverlayVertex> overlay, std::span<const SkinBatch> meshes, std::span<const MeshInstance> imported) {
+bool Renderer::State::draw(std::span<const RenderItem> items,const View& view,std::span<const OverlayVertex> overlay,
+                           std::span<const SkinBatch> meshes,std::span<const MeshInstance> imported,std::span<const Effect> effects) {
+    if (effects.size()>Effects::limit) throw std::runtime_error("Effect emitter limit");
+    std::uint32_t particles = 0, decals = 0;
+    for (const auto& effect : effects) {
+        if (!finite(effect.position) || !finite(effect.radiance) ||
+            !(effect.age>=0 && effect.age<=Effects::lifetime && effect.radius>=0.01f && effect.radius<=8.0f) ||
+            std::max({effect.radiance.x,effect.radiance.y,effect.radiance.z})>16 ||
+            std::min({effect.radiance.x,effect.radiance.y,effect.radiance.z})<0) {
+            throw std::runtime_error("Effect emitter outside supported bounds");
+        }
+        if (effect.kind==EffectKind::burst) particles += 24;
+        else if (effect.kind==EffectKind::ground_ring) ++decals;
+        else throw std::runtime_error("Invalid effect kind");
+    }
     if (meshes.size()>skin_mesh_limit) throw std::runtime_error("Frame skin mesh limit");
     if (items.size() > instance_limit) throw std::runtime_error("Frame instance limit exceeded");
     if (overlay.size() > overlay_limit) throw std::runtime_error("Frame overlay limit exceeded");
@@ -308,11 +363,11 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     const auto& previous = frames[(serial+slots-1)%slots];
     wait(frame.finished);
     double elapsed = 0;
-    std::array<double,4> pass_gpu_ms{};
+    std::array<double,5> pass_gpu_ms{};
     const auto timed_serial = frame.finished;
-    std::array<std::uint64_t,5> stamps{};
+    std::array<std::uint64_t,6> stamps{};
     if (timed_serial && frame.timer) {
-        check(vkGetQueryPoolResults(device,frame.timer,0,5,sizeof(stamps),stamps.data(),sizeof(stamps[0]),
+        check(vkGetQueryPoolResults(device,frame.timer,0,6,sizeof(stamps),stamps.data(),sizeof(stamps[0]),
                                     VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT),"Read completed GPU pass timestamps");
         const auto mask = timestamp_bits == 64 ? std::numeric_limits<std::uint64_t>::max() : (1ULL<<timestamp_bits)-1;
         for (std::size_t i=0; i<pass_gpu_ms.size(); ++i) {
@@ -505,7 +560,7 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
         }
     }
     record(frame,previous,screen,view,camera,temporal,history,count,dirty_layers,std::span(shadow_draws).first(shadow.count),static_cast<std::uint32_t>(overlay.size()),
-           std::span(skin_draws).first(uploaded_draws));
+           std::span(skin_draws).first(uploaded_draws),effects);
     auto acquire = vk<VkSemaphoreSubmitInfo>(VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO);
     acquire.semaphore = frame.acquire;
     acquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -555,18 +610,18 @@ bool Renderer::State::draw(std::span<const RenderItem> items, const View& view, 
     }
     const auto triangles = count*(view.dense_mesh ? 192U : 12U)+uploaded_vertices/3;
     const unsigned draws = 1 + static_cast<unsigned>(temporal) + static_cast<unsigned>(count>0) + nonempty_shadows + static_cast<unsigned>(!overlay.empty()) +
-                           static_cast<unsigned>(shadow.count+1)*static_cast<unsigned>(uploaded_draws);
+                           static_cast<unsigned>(shadow.count+1)*static_cast<unsigned>(uploaded_draws)+static_cast<unsigned>(effects.size());
     auto owned = geometry.allocated+capture.allocated;
     for (const auto& slot : frames) {
         owned += slot.instances.allocated+slot.overlay.allocated+slot.lighting.allocated+slot.skin.allocated+
                  slot.skin_instances.allocated+slot.light_tiles.allocated+slot.motions.allocated+slot.mesh_motions.allocated+
                  slot.texture_staging.allocated+slot.hdr.allocated+slot.depth.allocated+slot.shadow.allocated+
-                 slot.motion.allocated+slot.history.allocated+slot.textures.allocated;
+                 slot.motion.allocated+slot.history.allocated+slot.textures.allocated+slot.effects.allocated;
     }
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
               properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3,
-              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history,texture_layers,static_cast<std::uint32_t>(std::popcount(dirty_layers)),pass_gpu_ms,owned};
+              static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history,texture_layers,static_cast<std::uint32_t>(std::popcount(dirty_layers)),pass_gpu_ms,owned,particles,decals};
     return true;
 }
 

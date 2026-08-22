@@ -92,17 +92,18 @@ def verify_render(raw):
         check((width, height, submitted, culled, triangles, lights) ==
               (1920, 1080, 10500, 0, 2016016, 128) and casters > 0, "Missing render workload")
         shadow_maps, shadow_draws = int(row["shadow_maps"]), int(row["shadow_draws"])
-        check(shadow_maps == 9 and 3 <= shadow_draws <= 9 and draws == shadow_draws+23,
+        check(shadow_maps == 9 and 3 <= shadow_draws <= 9 and draws == shadow_draws+25,
               "Directional or point shadow atlas workload incomplete")
         check(int(row["motion_items"]) == submitted and int(row["animated_triangles"]) == 16,
               "Missing temporal or skinned workload")
+        check(int(row["particles"]) == 24 and int(row["decals"]) == 1, "Missing additive effects workload")
         light_tiles, entries = int(row["light_tiles"]), int(row["tile_light_entries"])
         check(light_tiles == ((width+31)//32)*((height+31)//32) and
               0 < entries < light_tiles*lights, "Invalid forward light tile counters")
         bits = int(row["timestamp_bits"])
         period = float(row["period_ns"])
         check(16 <= bits <= 64 and 0 < period < 1000, "Invalid hardware timestamp scale")
-        ticks = [int(row[key]) for key in ("start", "shadow", "opaque", "temporal", "display")]
+        ticks = [int(row[key]) for key in ("start", "shadow", "opaque", "temporal", "effects", "display")]
         mask = (1 << bits) - 1
         segments = [((right-left) & mask)*period/1e6 for left, right in zip(ticks, ticks[1:])]
         check(all(0 < length < 1000 for length in segments), "Missing GPU pass timing")
@@ -119,6 +120,7 @@ def verify_render(raw):
           "Point shadow color witness outside bounds")
     verify_temporal(raw)
     verify_material(raw)
+    verify_effects(raw)
     return {
         "render_gpu_p50_ms": percentile(timings, 0.5), "render_gpu_p99_ms": percentile(timings, 0.99),
         "render_host_p50_ms": percentile(host, 0.5), "render_host_p99_ms": percentile(host, 0.99)
@@ -155,6 +157,21 @@ def verify_material(raw):
     check(sum(srgb)-sum(normal) >= 500, "Normal texture did not darken the reference patch")
     check(sum(reload)-sum(normal) >= 500, "Material reload did not replace the GPU texture")
     check("validation_errors=0" in (raw / "material_fixture.out").read_text(), "Material validation incomplete")
+
+
+def verify_effects(raw):
+    def read_capture(name):
+        image = (raw / "effects-fixture" / (name + ".ppm")).read_bytes()
+        prefix = b"P6\n640 420\n255\n"
+        check(image.startswith(prefix) and len(image) == len(prefix)+640*420*3, "Effects readback extent mismatch")
+        return image[len(prefix):]
+
+    base = read_capture("reference")
+    for name in ("burst", "ring"):
+        effect = read_capture(name)
+        check(sum(base[i:i+3] != effect[i:i+3] for i in range(0,len(base),3)) >= 100, "Visible effect missing")
+    check(base == read_capture("occluded"), "Opaque geometry failed to occlude effects")
+    check("validation_errors=0" in (raw / "effects_fixture.out").read_text(), "Effects validation incomplete")
 
 
 def verify_package(bundle):
@@ -202,6 +219,9 @@ def verify_package(bundle):
     packaged = (raw / "package_smoke.out").read_text()
     states = re.findall(r"replay_ticks=(\d+) final_hash=(\d+) completed=1", packaged)
     check(len(states) == 3 and "mesh_triangles=64 texture_layers=3" in packaged, "Packaged route or imported asset missing")
+    effects = re.findall(r"peak_particles=(\d+) peak_decals=(\d+)", packaged)
+    check(len(effects) == 3 and all(int(burst)>=24 and int(decal)>=1 for burst, decal in effects),
+          "Gameplay effects missing from a packaged replay")
     client = re.search(r"coop_client_sent=(\d+) coop_client_received=(\d+) coop_client_snapshots=(\d+)", packaged)
     host = re.search(r"coop_host_sent=(\d+) coop_host_received=(\d+) coop_host_input=(\d+)", packaged)
     check(client and host and min(map(int, client.groups())) >= 5 and min(int(host[1]), int(host[2])) >= 5
@@ -234,7 +254,7 @@ def verify(bundle, source, tool):
     commands = [json.loads(line) for line in (bundle / "COMMANDS.jsonl").read_text().splitlines()]
     names = ["doctor", "build", "cook", "ctest", "world", "scheduler", "solo", "network", "ecs", "physics"]
     if profile == "portability-diagnostic":
-        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "material_fixture", "render", "ui_check", "editor",
+        names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "material_fixture", "effects_fixture", "render", "ui_check", "editor",
                   "editor_frame", "editor_physics", "editor_assets", "package", "package_smoke"]
     check([row["name"] for row in commands] == names and all(
         row["exit"] == 0 and 0 <= row["wall_seconds"] < row["timeout_seconds"] for row in commands

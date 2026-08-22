@@ -7,6 +7,7 @@ digraph Emberfall {
  scene [label="Opaque HDR, motion and depth"]
  history [label="Previous slot history"]
  temporal [label="Depth-tested temporal resolve"]
+ effects [label="Depth-tested HDR effects"]
  map [label="Exposure and filmic curve"]
  ui [label="Blend overlay"]
  read [label="Optional framebuffer copy"]
@@ -14,7 +15,9 @@ digraph Emberfall {
  depth -> scene [label="sample depth"]
  scene -> temporal [label="HDR + motion"]
  history -> temporal [label="prior HDR + depth"]
- temporal -> map [label="sample resolved HDR"]
+ temporal -> map [label="resolved HDR"]
+ scene -> effects [label="read-only scene depth"]
+ effects -> map [label="additive HDR"]
  scene -> map [label="direct HDR when disabled", style=dashed]
  map -> ui -> present
  ui -> read -> present

@@ -37,6 +37,7 @@ jobs:
           xvfb-run -a build/gpu_shadow build/shaders build/shadow-probe
           xvfb-run -a build/gpu_temporal build/shaders build/temporal-probe
           xvfb-run -a build/gpu_material build/shaders build/material-probe
+          xvfb-run -a build/gpu_effects build/shaders build/effects-probe
           xvfb-run -a build/lantern-reach --validate --ui-check --no-audio --profile build/ui-check-profile
       - name: Verify standalone Linux diagnostic package
         run: |

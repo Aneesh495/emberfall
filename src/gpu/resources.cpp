@@ -91,8 +91,10 @@ void Renderer::State::free(Buffer& buffer) {
 void Renderer::State::create_pipeline_layouts() {
     const VkDescriptorSetLayoutBinding binding{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr};
     auto sample_info = vk<VkDescriptorSetLayoutCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
-    sample_info.bindingCount = 1;
-    sample_info.pBindings = &binding;
+    auto display_bindings = std::array{binding,binding};
+    display_bindings[1].binding = 1;
+    sample_info.bindingCount = static_cast<std::uint32_t>(display_bindings.size());
+    sample_info.pBindings = display_bindings.data();
     check(vkCreateDescriptorSetLayout(device,&sample_info,nullptr,&sample_layout),"Create tonemap descriptor layout");
     auto resolve_bindings = std::array{binding,binding,binding};
     resolve_bindings[1].binding = 1;
@@ -133,6 +135,11 @@ void Renderer::State::create_pipeline_layouts() {
     layout.pSetLayouts = &sample_layout;
     layout.pPushConstantRanges = &display;
     check(vkCreatePipelineLayout(device,&layout,nullptr,&tonemap_layout),"Create tonemap pipeline layout");
+    const VkPushConstantRange effects{VK_SHADER_STAGE_VERTEX_BIT,0,112};
+    layout.setLayoutCount = 0;
+    layout.pSetLayouts = nullptr;
+    layout.pPushConstantRanges = &effects;
+    check(vkCreatePipelineLayout(device,&layout,nullptr,&effects_layout),"Create effects pipeline layout");
     const VkPushConstantRange overlay{VK_SHADER_STAGE_FRAGMENT_BIT,0,4};
     layout.setLayoutCount = 0;
     layout.pSetLayouts = nullptr;
@@ -175,7 +182,7 @@ void Renderer::State::create_frames() {
         if (timestamp_bits) {
             auto query = vk<VkQueryPoolCreateInfo>(VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO);
             query.queryType = VK_QUERY_TYPE_TIMESTAMP;
-            query.queryCount = 5;
+            query.queryCount = 6;
             check(vkCreateQueryPool(device,&query,nullptr,&frame.timer),"Create frame timer queries");
         }
         make_buffer(frame.instances,(instance_limit+shadow_instance_limit)*sizeof(RenderItem),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -210,6 +217,7 @@ void Renderer::State::clear_swapchain() {
         free(frame.depth);
         free(frame.motion);
         free(frame.history);
+        free(frame.effects);
         frame.sample = frame.history_sample = frame.resolve_set = frame.resolve_first_set = nullptr;
         frame.history_written = frame.motion_sampled = false;
         frame.light_set = nullptr;
@@ -291,7 +299,7 @@ bool Renderer::State::rebuild_swapchain() {
     tonemap_pipeline = gpu::pipeline(device,shaders,tonemap_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::tonemap);
     overlay_pipeline = gpu::pipeline(device,shaders,overlay_layout,screen_format,VK_FORMAT_UNDEFINED,gpu::Pipeline::overlay);
     const std::array<VkDescriptorPoolSize,3> pool_sizes{{
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,11*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,13*slots},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,slots},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,slots}
     }};
     auto pool = vk<VkDescriptorPoolCreateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO);
@@ -304,6 +312,7 @@ bool Renderer::State::rebuild_swapchain() {
         make_image(frame.hdr,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
         make_image(frame.motion,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
         make_image(frame.history,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
+        make_image(frame.effects,hdr_format,color_use,VK_IMAGE_ASPECT_COLOR_BIT);
         make_image(frame.depth,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,VK_IMAGE_ASPECT_DEPTH_BIT);
         auto set = vk<VkDescriptorSetAllocateInfo>(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO);
         set.descriptorPool = descriptors;
@@ -316,12 +325,19 @@ bool Renderer::State::rebuild_swapchain() {
         update.descriptorCount = 1;
         update.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         update.pImageInfo = &image;
-        vkUpdateDescriptorSets(device,1,&update,0,nullptr);
+        const VkDescriptorImageInfo effect_image{sampler,frame.effects.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        auto effect_write = update;
+        effect_write.dstBinding = 1;
+        effect_write.pImageInfo = &effect_image;
+        const std::array raw_display{update,effect_write};
+        vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(raw_display.size()),raw_display.data(),0,nullptr);
         check(vkAllocateDescriptorSets(device,&set,&frame.history_sample),"Allocate resolved HDR descriptor");
         const VkDescriptorImageInfo history{sampler,frame.history.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         update.dstSet = frame.history_sample;
         update.pImageInfo = &history;
-        vkUpdateDescriptorSets(device,1,&update,0,nullptr);
+        effect_write.dstSet = frame.history_sample;
+        const std::array resolved_display{update,effect_write};
+        vkUpdateDescriptorSets(device,static_cast<std::uint32_t>(resolved_display.size()),resolved_display.data(),0,nullptr);
         set.pSetLayouts = &light_layout;
         check(vkAllocateDescriptorSets(device,&set,&frame.light_set),"Allocate light descriptors");
         const VkDescriptorBufferInfo buffer{frame.lighting.buffer,0,sizeof(Lighting)};

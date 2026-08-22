@@ -37,7 +37,7 @@ std::vector<T> enumerate(Enumerate&& call) {
 using Vertex = MeshVertex;
 std::vector<Vertex> cube(unsigned subdivisions);
 bool visible(const Mat4& view_projection, const Mat4& model);
-enum class Pipeline { scene, temporal, tonemap, overlay, shadow };
+enum class Pipeline { scene, temporal, tonemap, overlay, shadow, effects };
 VkPipeline pipeline(VkDevice device, const std::filesystem::path& dir,
                     VkPipelineLayout layout, VkFormat color, VkFormat depth, Pipeline kind);
 

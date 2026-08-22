@@ -1,5 +1,6 @@
 #version 450
 layout(set=0,binding=0) uniform sampler2D sceneColor;
+layout(set=0,binding=1) uniform sampler2D effectColor;
 layout(push_constant) uniform Display {
     float exposure;
     int filterEdges;
@@ -17,14 +18,18 @@ float luminance(vec3 color) {
     return dot(color,vec3(0.2126,0.7152,0.0722));
 }
 
+vec3 hdr(vec2 point) {
+    return texture(sceneColor,point).rgb+texture(effectColor,point).rgb;
+}
+
 void main() {
-    vec3 center = curve(texture(sceneColor,uv).rgb);
+    vec3 center = curve(hdr(uv));
     if (display.filterEdges != 0) {
         vec2 pixel = 1.0/vec2(textureSize(sceneColor,0));
-        vec3 left = curve(texture(sceneColor,uv-vec2(pixel.x,0)).rgb);
-        vec3 right = curve(texture(sceneColor,uv+vec2(pixel.x,0)).rgb);
-        vec3 top = curve(texture(sceneColor,uv-vec2(0,pixel.y)).rgb);
-        vec3 bottom = curve(texture(sceneColor,uv+vec2(0,pixel.y)).rgb);
+        vec3 left = curve(hdr(uv-vec2(pixel.x,0)));
+        vec3 right = curve(hdr(uv+vec2(pixel.x,0)));
+        vec3 top = curve(hdr(uv-vec2(0,pixel.y)));
+        vec3 bottom = curve(hdr(uv+vec2(0,pixel.y)));
         float x = abs(luminance(right)-luminance(left));
         float y = abs(luminance(bottom)-luminance(top));
         if (max(x,y)>0.14) {

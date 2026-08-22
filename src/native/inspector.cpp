@@ -106,13 +106,13 @@ void paint_frame_inspector(Canvas& canvas,const Renderer& renderer,std::size_t p
     const auto& graph = renderer.graph_report();
     const auto index = graph.pass_count ? pass_index%graph.pass_count : 0;
     const auto& pass = graph.passes[index];
-    const auto x = card(canvas,"FRAME PROFILER",224+49*static_cast<float>(pass.image_count));
+    const auto x = card(canvas,"FRAME PROFILER",240+45*static_cast<float>(pass.image_count));
     canvas.text(x,85,1.18f,"GPU "+precision(frame.gpu_ms)+" MS   FRAME "+std::to_string(frame.timed_serial),text);
     canvas.text(x,100,1.18f,"ALLOCATED "+precision(static_cast<double>(frame.owned_bytes)/(1024*1024),1)+" MIB",text);
     canvas.text(x,115,1.18f,std::to_string(frame.triangles)+" TRIS   "+std::to_string(frame.draw_calls)+" DRAWS",text);
     canvas.text(x,130,1.18f,std::to_string(frame.lights)+" LIGHTS   "+std::to_string(frame.tile_light_entries)+" TILE LINKS",text);
     canvas.text(x,145,1.18f,std::to_string(frame.texture_layers)+" MAPS   "+std::to_string(frame.uploaded_texture_layers)+" UPLOADED",text);
-    constexpr std::array phase{"PREPASS / SHADOW","OPAQUE HDR","TEMPORAL","DISPLAY / CAPTURE"};
+    constexpr std::array phase{"PREPASS / SHADOW","OPAQUE HDR","TEMPORAL","EFFECTS","DISPLAY / CAPTURE"};
     for (std::size_t i=0; i<phase.size(); ++i) {
         const auto y = 168+static_cast<float>(i)*16;
         const auto time = frame.pass_gpu_ms[i];
@@ -123,11 +123,11 @@ void paint_frame_inspector(Canvas& canvas,const Renderer& renderer,std::size_t p
         canvas.text(x+224,y,1.05f,precision(time),text);
     }
     if (!graph.pass_count) return;
-    canvas.text(x,237,1.18f,std::to_string(index+1)+"/"+std::to_string(graph.pass_count)+" "+std::string(pass.name),label);
-    canvas.text(x,251,1.03f,"PAGE UP / DOWN SELECTS PASS",muted);
+    canvas.text(x,252,1.18f,std::to_string(index+1)+"/"+std::to_string(graph.pass_count)+" "+std::string(pass.name),label);
+    canvas.text(x,266,1.03f,"PAGE UP / DOWN SELECTS PASS",muted);
     for (std::size_t i=0; i<pass.image_count; ++i) {
         const auto& image = pass.images[i];
-        const float y = 271+49*static_cast<float>(i);
+        const float y = 285+45*static_cast<float>(i);
         canvas.text(x,y,1.12f,std::string(image.resource)+"  "+std::to_string(image.levels)+"M "+std::to_string(image.layers)+"L",text);
         canvas.text(x,y+11,1.02f,std::string(image.previous_layout)+" > "+std::string(image.layout),muted);
         canvas.text(x,y+22,1.02f,flags("STAGE",image.source_stage,image.destination_stage),muted);

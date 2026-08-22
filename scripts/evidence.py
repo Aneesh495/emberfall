@@ -75,7 +75,7 @@ def main():
             try:
                 environment = os.environ.copy()
                 layer_library = environment.get("EMBERFALL_VALIDATION_LIB")
-                if layer_library and name in ("gpu_smoke", "render", "ui_check", "editor", "shadow_fixture", "temporal_fixture", "material_fixture", "editor_frame", "editor_physics", "editor_assets"):
+                if layer_library and name in ("gpu_smoke", "render", "ui_check", "editor", "shadow_fixture", "temporal_fixture", "material_fixture", "effects_fixture", "editor_frame", "editor_physics", "editor_assets"):
                     environment["DYLD_LIBRARY_PATH"] = layer_library
                 result = subprocess.run(command, stdout=output, stderr=error, cwd=root, timeout=timeout, env=environment)
                 code = result.returncode
@@ -128,6 +128,7 @@ def main():
                 run("shadow_fixture", [binary("gpu_shadow"), build / "shaders", logs / "shadow-fixture"])
                 run("temporal_fixture", [binary("gpu_temporal"), build / "shaders", logs / "temporal-fixture"])
                 run("material_fixture", [binary("gpu_material"), build / "shaders", logs / "material-fixture"])
+                run("effects_fixture", [binary("gpu_effects"), build / "shaders", logs / "effects-fixture"])
                 run("render", [binary("gpu_stress"), build / "shaders"], timeout=120, stdout=logs / "render.csv")
                 run("ui_check", [binary("lantern-reach"), "--validate", "--ui-check", "--no-audio",
                                  "--profile", destination / "ui-profile", "--capture", logs / "ui.ppm"])
@@ -146,7 +147,7 @@ def main():
                     if len(archives) == 1:
                         run("package_smoke", ["python3", "scripts/package_smoke.py", archives[0],
                                               destination / "replays", logs / "ending.ppm"], timeout=190)
-        required_count = 22 if args.profile == "portability-diagnostic" else 10
+        required_count = 23 if args.profile == "portability-diagnostic" else 10
         status = "recorded" if cooked and len(commands) == required_count and all(
             row["exit"] == 0 for row in commands
         ) else "failed"

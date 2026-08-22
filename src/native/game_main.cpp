@@ -151,6 +151,7 @@ private:
     bool recording_done_{}, script_done_{};
     struct NetSample { float sent{}, received{}; };
     std::unique_ptr<net::Session> network_;
+    Effects effects_;
     std::deque<NetSample> network_samples_;
     net::Statistics previous_network_stats_{};
     std::uint64_t last_network_sample_{}, accepted_snapshots_{};
@@ -212,6 +213,7 @@ void Application::load(Progress progress) {
     if (recording_ && !recording_->ticks.empty()) save_tape();
     world_ = campaign_.load(progress);
     renderer_.reset_history();
+    effects_.clear();
     progress_ = progress;
     if (!options_.record.empty() && !recording_done_) recording_ = Replay{campaign_.revision(),progress,{}};
     screen_ = Screen::playing;
@@ -342,7 +344,9 @@ void Application::handle(Input input) {
 
 void Application::trigger(GameEvent event) {
     Vec3 origin = world_->player(selected_).body.feet;
-    const auto& nodes = campaign_.scene(progress_.level).nodes;
+    const auto& scene = campaign_.scene(progress_.level);
+    effects_.add(event,scene,origin,world_->ticks());
+    const auto& nodes = scene.nodes;
     if (const auto found = nodes.find(event.subject); found != nodes.end()) origin = found->second.position;
     const auto offset = origin - world_->player(selected_).body.feet;
     audio_.cue(event.signal,std::clamp(offset.x/8,-1.0f,1.0f),1/(1+length(offset)*0.12f));
@@ -405,6 +409,7 @@ void Application::accept(net::ServerFrame frame,std::uint64_t now) {
         trigger({Signal::checkpoint,frame.simulation.checkpoint});
     }
     if (frame.simulation.completed && screen_ != Screen::next && screen_ != Screen::finished) {
+        effects_.add({Signal::exit,0},campaign_.scene(frame.level),world_->player(1).body.feet,world_->ticks());
         audio_.cue(Signal::exit);
         const bool final = frame.level+1 == Campaign::level_count;
         progress_ = {final ? frame.level : frame.level+1,0,final};
@@ -518,6 +523,7 @@ void Application::simulate(double elapsed) {
     accumulator_ = std::min(accumulator_+elapsed,cap);
     if (script_ && options_.replay_fast) accumulator_ = 4*static_cast<double>(Game::timestep);
     while (accumulator_ >= Game::timestep && screen_ == Screen::playing) {
+        effects_.update(Game::timestep);
         std::array<Command,2> pair{};
         pair[selected_] = pending_;
         if (script_) pair = script_->ticks.at(script_cursor_).commands;
@@ -679,6 +685,7 @@ void Application::check_ui(unsigned frame) {
 int Application::run() {
     auto previous = SDL_GetTicksNS();
     unsigned drawn = 0, checked_frame = std::numeric_limits<unsigned>::max();
+    std::uint32_t peak_particles = 0, peak_decals = 0;
     const auto stop_at = previous+60'000'000'000ULL;
     while (!quit_) {
         const auto now = SDL_GetTicksNS();
@@ -712,7 +719,9 @@ int Application::run() {
         const auto animation = world_->skin(alpha,remote);
         View view{eye_,focus_,0.88f,settings_.exposure,settings_.antialias};
         view.temporal = true;
-        if (renderer_.draw(items,view,canvas.vertices(),animation,world_->imported_meshes())) {
+        if (renderer_.draw(items,view,canvas.vertices(),animation,world_->imported_meshes(),effects_.active())) {
+            peak_particles = std::max(peak_particles,renderer_.report().particles);
+            peak_decals = std::max(peak_decals,renderer_.report().decals);
             ++drawn;
             if ((options_.frames && drawn == options_.frames) || script_done_) break;
         } else SDL_Delay(10);
@@ -726,7 +735,8 @@ int Application::run() {
     const auto& report = renderer_.report();
     std::cout << "frames=" << drawn << " surface=" << report.width << 'x' << report.height
               << " submitted=" << report.submitted << " culled=" << report.culled
-              << " mesh_triangles=" << report.imported_triangles << " texture_layers=" << report.texture_layers << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors() << '\n';
+              << " mesh_triangles=" << report.imported_triangles << " texture_layers=" << report.texture_layers << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors()
+              << " peak_particles=" << peak_particles << " peak_decals=" << peak_decals << '\n';
     if (network_) {
         const auto& net = network_->stats();
         std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received

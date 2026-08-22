@@ -19,7 +19,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E13 | Linear HDR color, metallic/roughness textures, tangent-space normal maps, filmic display and sRGB output. Image-based lighting remains. [Lighting shader](../shaders/scene.frag), [display shader](../shaders/tonemap.frag) |
 | E14 | Three directional cascades and one six-face point shadow fit a shared atlas. CPU-built forward light tiles bound fragment work. Depth clustering and multi-light shadow allocation remain. [Lighting shader](../shaders/scene.frag) |
 | E15 | HDR, exposure, rigid motion vectors, jitter and bounded temporal history. Camera cuts and resize have readback coverage. Skinned deformation uses current-frame samples. [Temporal study](TEMPORAL.md) |
-| E16 | Distance fog and editor gizmo geometry. Particles, decals and bounded translucent scene rendering remain. [Lighting shader](../shaders/scene.frag) |
+| E16 | Distance fog, debug overlays, GPU particle bursts and bounded additive ground decals. General alpha-blended surfaces remain. [Effects](EFFECTS.md) |
 | E17 | Device identity, shader load validation, raw GPU timestamps, framebuffer readback and live pass and resource inspection. [Frame recorder](../src/gpu/frame.cpp) |
 | E18 | Boxes, spheres, capsules and validated convex hulls with angular impulses. Single-witness contacts and bounded continuous sweeps. [Angular physics](ANGULAR_PHYSICS.md) |
 | E19 | Warm starts, friction, restitution, sleeping, layer masks, triggers and conservative CCD against static boxes. [Dynamics fixtures](../tests/dynamics.cpp) |
