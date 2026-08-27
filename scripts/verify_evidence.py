@@ -81,11 +81,46 @@ def verify_cpu(bundle):
     return summaries
 
 
+def read_ppm(path, expected=None):
+    magic, shape, data = path.read_bytes().split(b"\n", 2)
+    width, height = map(int, shape.split())
+    check(magic == b"P6" and 200 <= width <= 4096 and 200 <= height <= 4096 and
+          data.startswith(b"255\n") and len(data) == 4+width*height*3, f"Incomplete framebuffer readback: {path.name}")
+    check(expected is None or (width, height) == expected, f"Framebuffer extent mismatch: {path.name}")
+    return width, height, data[4:]
+
+
+def verify_shadows(raw):
+    directory = raw / "shadow-fixture"
+    width, height, off = read_ppm(directory / "point-off.ppm", (720,480))
+    _, _, on = read_ppm(directory / "point-on.ppm", (width,height))
+    length = math.sqrt(61.0)
+    focal_pixels = height / (2*math.tan(0.4))
+
+    def patch_delta(x, z):
+        # The fixture eye is (0,5,6), aimed at the origin with positive Y up.
+        depth = length-6*z/length
+        view_y = -5*z/length
+        center_x = int(width*0.5+x*focal_pixels/depth)
+        center_y = int(height*0.5-view_y*focal_pixels/depth)
+        starts = ((py*width+px)*3 for py in range(center_y-2,center_y+3)
+                  for px in range(center_x-2,center_x+3))
+        return sum(sum(off[index:index+3])-sum(on[index:index+3]) for index in starts)
+
+    blocked, open_patch = patch_delta(0.95,0), patch_delta(-1.45,0.55)
+    check(blocked >= 200 and abs(open_patch) <= 35, "Point shadow color witness outside bounds")
+    log = (raw / "shadow_fixture.out").read_text()
+    check(f"occluded_region_delta={blocked} open_region_delta={open_patch} validation_errors=0" in log,
+          "Shadow log disagrees with independent framebuffer witness")
+    return blocked, open_patch
+
+
 def verify_render(raw):
     rows = records(raw / "render.csv")
     check([int(row["serial"]) for row in rows] == list(range(19, 159)), "Render sample order")
     timings = []
     host = []
+    passes = {name: [] for name in ("shadow", "opaque", "temporal", "effects", "display")}
     for row in rows:
         values = tuple(int(row[key]) for key in ("width", "height", "submitted", "culled", "triangles", "casters", "lights", "draw_calls"))
         width, height, submitted, culled, triangles, casters, lights, draws = values
@@ -103,7 +138,7 @@ def verify_render(raw):
         bits = int(row["timestamp_bits"])
         period = float(row["period_ns"])
         check(16 <= bits <= 64 and 0 < period < 1000, "Invalid hardware timestamp scale")
-        ticks = [int(row[key]) for key in ("start", "shadow", "opaque", "temporal", "effects", "display")]
+        ticks = [int(row[key]) for key in ("start", *passes)]
         mask = (1 << bits) - 1
         segments = [((right-left) & mask)*period/1e6 for left, right in zip(ticks, ticks[1:])]
         check(all(0 < length < 1000 for length in segments), "Missing GPU pass timing")
@@ -111,29 +146,26 @@ def verify_render(raw):
         claimed = float(row["reported_gpu_ms"])
         check(math.isclose(total, claimed, rel_tol=1e-6, abs_tol=1e-7), "Reported GPU time disagrees with raw queries")
         timings.append(total)
+        for name, duration in zip(passes,segments):
+            passes[name].append(duration)
         host.append(int(row["host_ns"])/1e6)
     check("validation_errors=0" in (raw / "gpu_smoke.out").read_text(), "GPU smoke validation incomplete")
     check("validation_errors=0" in (raw / "render.err").read_text(), "Render stress validation incomplete")
-    fixture = re.search(r"occluded_region_delta=(\d+) open_region_delta=(-?\d+) validation_errors=0",
-                        (raw / "shadow_fixture.out").read_text())
-    check(fixture is not None and int(fixture[1])>=200 and abs(int(fixture[2]))<=35,
-          "Point shadow color witness outside bounds")
+    blocked, open_patch = verify_shadows(raw)
     verify_temporal(raw)
     verify_material(raw)
     verify_effects(raw)
     return {
         "render_gpu_p50_ms": percentile(timings, 0.5), "render_gpu_p99_ms": percentile(timings, 0.99),
-        "render_host_p50_ms": percentile(host, 0.5), "render_host_p99_ms": percentile(host, 0.99)
+        "render_host_p50_ms": percentile(host, 0.5), "render_host_p99_ms": percentile(host, 0.99),
+        "render_gpu_pass_p50_ms": {name: percentile(durations, 0.5) for name,durations in passes.items()},
+        "point_shadow_occluded_delta": blocked, "point_shadow_open_delta": open_patch
     }
 
 
 def verify_temporal(raw):
     def pixels(name, width=640, height=420):
-        data = (raw / "temporal-fixture" / (name + ".ppm")).read_bytes()
-        prefix = f"P6\n{width} {height}\n255\n".encode()
-        check(data.startswith(prefix) and len(data) == len(prefix)+width*height*3,
-              "Temporal readback extent mismatch")
-        return data[len(prefix):]
+        return read_ppm(raw / "temporal-fixture" / (name+".ppm"), (width,height))[2]
 
     cold = pixels("cold")
     warm = pixels("warm")
@@ -146,11 +178,8 @@ def verify_temporal(raw):
 
 def verify_material(raw):
     def center(name):
-        image = (raw / "material-fixture" / (name + ".ppm")).read_bytes()
-        header = b"P6\n512 320\n255\n"
-        check(image.startswith(header) and len(image) == len(header)+512*320*3, "Material readback extent mismatch")
-        start = len(header)
-        return [sum(image[start+(y*512+x)*3+c] for x in range(254,259) for y in range(158,163)) for c in range(3)]
+        width, _, image = read_ppm(raw / "material-fixture" / (name+".ppm"), (512,320))
+        return [sum(image[(y*width+x)*3+c] for x in range(254,259) for y in range(158,163)) for c in range(3)]
 
     factor, srgb, normal, reload = [center(name) for name in ("factor", "srgb", "normal", "reloaded")]
     check(max(abs(a-b) for a,b in zip(factor,srgb)) <= 50, "sRGB material conversion disagrees with linear reference")
@@ -161,10 +190,7 @@ def verify_material(raw):
 
 def verify_effects(raw):
     def read_capture(name):
-        image = (raw / "effects-fixture" / (name + ".ppm")).read_bytes()
-        prefix = b"P6\n640 420\n255\n"
-        check(image.startswith(prefix) and len(image) == len(prefix)+640*420*3, "Effects readback extent mismatch")
-        return image[len(prefix):]
+        return read_ppm(raw / "effects-fixture" / (name+".ppm"), (640,420))[2]
 
     base = read_capture("reference")
     for name in ("burst", "ring"):
@@ -212,10 +238,7 @@ def verify_package(bundle):
               "Editor live diagnostics evidence incomplete")
     for filename in ("frame.ppm", "ui.ppm", "editor.ppm", "editor-frame.ppm", "editor-physics.ppm", "editor-assets.ppm",
                      "network.ppm", "ending.ppm"):
-        header, shape, rgb = (raw / filename).read_bytes().split(b"\n", 2)
-        width, height = map(int, shape.split())
-        check(header == b"P6" and 200 <= width <= 4096 and 200 <= height <= 4096 and
-              rgb.startswith(b"255\n") and len(rgb) == 4 + width * height * 3, "Incomplete framebuffer readback")
+        read_ppm(raw / filename)
     packaged = (raw / "package_smoke.out").read_text()
     states = re.findall(r"replay_ticks=(\d+) final_hash=(\d+) completed=1", packaged)
     check(len(states) == 3 and "mesh_triangles=64 texture_layers=3" in packaged, "Packaged route or imported asset missing")

@@ -67,6 +67,11 @@ def visible_hidden_effect(bundle):
     shutil.copyfile(fixture / "burst.ppm", fixture / "occluded.ppm")
 
 
+def erased_shadow_image(bundle):
+    fixture = bundle / "raw" / "shadow-fixture"
+    shutil.copyfile(fixture / "point-off.ppm", fixture / "point-on.ppm")
+
+
 def wrong_source(bundle):
     for name in ("SOURCE_INPUTS.json", "ACCEPTANCE.json"):
         target = bundle / name
@@ -94,6 +99,7 @@ def main():
         controls += [
             ("false_timing", inaccurate_gpu, True, "Reported GPU time disagrees"),
             ("missing_gpu_pass", erased_shadow, True, "Missing GPU pass timing"),
+            ("missing_shadow_witness", erased_shadow_image, True, "Point shadow color witness"),
             ("missing_temporal_accumulation", erased_history, True, "Temporal accumulation missing"),
             ("stale_material_reload", unchanged_material_reload, True, "Material reload did not replace"),
             ("effect_ignores_depth", visible_hidden_effect, True, "Opaque geometry failed to occlude effects"),
