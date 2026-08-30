@@ -5,11 +5,11 @@ Emberfall runs as a native game and scene workshop. The current acceptance scope
 | Gate | Full status | Available evidence or missing work |
 | --- | --- | --- |
 | G01 Original engine | Unverified | Original C++ world, simulation, editor, renderer, cook and transport paths are in use. A final source and dependency audit remains. |
-| G02 Playable product | Unverified | All three levels replay through the standalone game. Both UDP test endpoints finish each level. A full interactive packaged solo and network session remains. |
+| G02 Playable product | Unverified | All three levels replay through the standalone game. Both impaired UDP test endpoints finish each level, and packaged native peers exchange real state on loopback. Full interactive packaged solo and two-machine playthroughs remain. |
 | G03 ECS | Passed | One million seeded operations against an independent record model, stale entity checks and deferred removal. |
 | G04 Scheduler | Unverified | Random graph and conflict checks, cancellation and four active workers. Broader race instrumentation remains. |
 | G05 Rendering correctness | Unverified | Native synchronization validation and resize fixture pass for the implemented graph. sRGB and normal-map material readback, texture replacement, local shadows and temporal history exercise the Vulkan path. The full pass and device validation matrix remains. |
-| G06 Rendering performance | Blocked | The M2 diagnostic uses the target geometry count and resolution with a narrower pass set. The Linux reference GPU and full graph are outstanding. |
+| G06 Rendering performance | Blocked | The M2 diagnostic measured 13.733 ms median and 15.556 ms p99 for the declared synthetic graph at 1080p. The Linux reference GPU and full feature workload are outstanding. |
 | G07 ECS performance | Unverified | Separate one- and four-worker 100,000-entity diagnostic available. The reference CPU is not pinned. |
 | G08 Physics | Unverified | Analytical linear contacts, momentum exchange, stack, tunneling, character steps and moving platforms are exercised. Convex and angular fixtures cover off-center impacts, rotated contacts and rolling. Mixed-shape manifolds, rotational sweeps and the complete reference workload remain. |
 | G09 Content | Unverified | Catalog manifests, prefab rebuilds and scene cache reload are exercised. Static glTF and GLB meshes and bounded PNG textures cook and render in both native programs. Skeletal and clip imports and asynchronous GPU resource streaming remain. |

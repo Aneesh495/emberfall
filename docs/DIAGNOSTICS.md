@@ -1,20 +1,20 @@
 # Verified portability diagnostic
 
-Run `m2-portability-v4` executed commit `dba0fe7ea2429ae4aeec311efa866fef98d895e7` from a clean isolated checkout. The renderer ran on the Apple M2 using MoltenVK 1.4.2. The evidence manifest SHA-256 is `3c609d023c2f254d7eedc4e61971af26b417f5c87eb70e91e80e9d759567f109`.
+Run `m2-continuation-v1` executed source commit `4d1550212d50d3687bf00fcd95ff86d9a37b8b2d` from a clean isolated checkout. The native renderer used an Apple M2 and MoltenVK 1.4.2. The evidence manifest SHA-256 is `f326b9f4b25b281fceb0b59ca9d015d30d3539f2f47e9d02e76a882b05b9dc00`.
 
 | Workload | Observed result |
 | --- | --- |
-| Native renderer | 14.76 ms p50 and 15.93 ms p99 GPU time. Host draw time was 16.54 ms p50 and 17.84 ms p99. |
-| Directional shadow, opaque lighting, display | Pass medians were 0.75 ms, 13.76 ms and 0.20 ms. Percentiles are calculated per pass. |
-| ECS | 4.347 ms p95 with one worker and 0.304 ms with four. Both 100,000-entity runs produced identical final state hashes. |
-| Physics | 0.399 ms p95 for 1,000 translating bodies plus the static floor. The measured interval contained 987 to 1,000 contacts per tick. |
-| Packaged game | The Aperture, Prism Gallery and Meridian replayed 357, 372 and 453 ticks. Their final hashes matched independently replayed command tapes. |
-| UDP fault test | Two loopback endpoints finished all three levels under the declared synthetic impairment. The host emitted exactly one mirror event and three exit events. |
-| Native UI and editor | The game exercised keyboard menus, settings persistence, focus loss, pause, restart and resize. The editor presented 25 validated frames. |
-| Independent verifier | All seven rejection probes passed, including false timing, a missing pass, altered replay state, and a duplicated network completion. |
+| Render stress | 160 presented frames at 1920x1080 and zero Vulkan validation errors. The 140 retained timing rows measured 13.733 ms p50 and 15.556 ms p99 GPU time. Host draw time was 16.611 ms p50 and 17.892 ms p99. |
+| GPU stages | Independent p50 values were 4.412 ms for shadow and prepass, 9.077 ms for opaque, 0.193 ms for temporal resolve, 0.069 ms for effects and 0.191 ms for display. Stage percentiles use their own distributions. |
+| Rendering fixtures | The blocked shadow patch darkened by 234 summed RGB units. The open patch changed by zero. Temporal camera-cut and reset frames matched byte for byte. The sRGB texture matched its linear material reference. The hidden particle burst changed zero pixels. |
+| ECS and physics | One million operations matched the ECS oracle. The useful 100,000-entity workload took 0.268 ms p95 with one worker and 0.111 ms with four. The 1,000 translating-body workload measured 0.431 ms p95. Convex contact and angular response use separate analytical fixtures. |
+| Packaged game | All three native solo replays completed with the expected 357, 372 and 453 ticks and exact same-build replay hashes. Each replay submitted GPU particles and a ground decal. |
+| Packaged co-op | Two native processes on loopback exchanged authoritative state. The client applied 48 snapshots and the host acknowledged remote input through sequence 148. The separate impaired UDP fixture completed all three levels and emitted one mirror event and three exit events. |
+| Workshop and content | Validated captures exercised the frame, collision and asset inspectors. Both native applications rendered the 64-triangle glTF monitor with three texture layers. Tests exercised transitive prefab dependencies and restored serialized undo and redo. |
+| Verification | 18 tests passed in the native suite and in a separate ASan/UBSan core build. Eleven evidence tamper controls were rejected for their expected reasons. |
 
-The renderer submitted 10,500 instances and 2,016,000 opaque triangles at 1920x1080 with 128 local lights. It used one 1536-square directional shadow map, HDR lighting and the display filter. There were zero Vulkan validation errors in the stress and resize tests. The benchmark geometry is synthetic and its pass set is narrower than the full profile. The opaque stage dominated GPU time in this workload. The previous verified diagnostic measured 0.277 ms p95 for the same single-worker ECS workload. The two observations show substantial timing variance on the local host.
+The stress scene submits 10,500 opaque instances and two animated eight-triangle cloth batches for 2,016,016 opaque triangles. It uses 128 point lights, three directional cascades, one six-face local shadow, temporal resolve and an additive effects layer containing 24 particles and one ground ring. The benchmark uses synthetic geometry and exercises a subset of the required final features. Prior render CSVs preserve earlier pass sets.
 
-Ubuntu x86-64 hosted CI compiled the same source, ran the CPU suite and verifier controls, exercised the software Vulkan resize and UI paths, and replayed the Meridian from the Linux package. This is a software Vulkan diagnostic. [Hosted run](https://github.com/Aneesh495/emberfall/actions/runs/41870922561)
+Linux x86-64 hosted CI passed on the frozen executable source. It ran the CPU diagnostic, software Vulkan fixtures, all three standalone replays and the two-process packaged co-op check. [Hosted run](https://github.com/Aneesh495/emberfall/actions/runs/41909147066)
 
-Full attempt `full-attempt-v4` recorded the unpinned Linux hardware profile and outstanding rendering, release and soak prerequisites. The full acceptance command exited nonzero. See the [gate matrix](BUILD_STATUS.md).
+Full attempt `full-continuation-attempt-v1` recorded the unavailable Linux GPU reference and outstanding render, soak and clean-machine release requirements. Both the full acceptance invocation and the release gate exited nonzero. See the [gate matrix](BUILD_STATUS.md) and [reproduction commands](REPRODUCIBILITY.md).
