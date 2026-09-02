@@ -26,20 +26,37 @@ struct Keyframe {
 
 using Track = std::vector<Keyframe>;
 
+template<class Value>
+struct Channel {
+    struct Key {
+        float second;
+        Value value;
+    };
+    std::vector<Key> keys;
+    bool stepped{};
+};
+
+struct JointChannels {
+    Channel<Vec3> translation, scale;
+    Channel<Quat> rotation;
+};
+
 class Clip {
 public:
     Clip(float duration,std::vector<Track> tracks);
+    Clip(float duration,std::vector<JointChannels> channels);
     std::vector<JointPose> sample(std::span<const Joint> joints,float second,bool loop) const;
 private:
     float duration_{};
     std::vector<Track> tracks_;
+    std::vector<JointChannels> channels_;
 };
 
 std::vector<JointPose> blend(std::span<const JointPose> first,std::span<const JointPose> second,float weight);
 
 class Skeleton {
 public:
-    explicit Skeleton(std::vector<Joint> joints);
+    explicit Skeleton(std::vector<Joint> joints,std::vector<Mat4> inverse_bind = {});
     std::span<const Joint> joints() const { return joints_; }
     std::vector<Mat4> palette(std::span<const JointPose> pose) const;
 private:
@@ -58,6 +75,12 @@ struct WeightedVertex {
     MeshVertex vertex;
     std::array<std::uint8_t,4> joints{};
     std::array<float,4> weights{};
+};
+
+struct MeshRig {
+    Skeleton skeleton;
+    std::vector<Clip> clips;
+    std::vector<Mat4> palette(float second) const;
 };
 
 std::vector<MeshVertex> deform(std::span<const WeightedVertex> vertices,std::span<const Mat4> palette);
