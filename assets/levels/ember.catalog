@@ -19,3 +19,5 @@ image prism-metal.png 77cc04c2ac014c8b80ad8bb8261144a7
 mesh-image prism-monitor.gltf prism-dial.png
 mesh-image prism-monitor.gltf prism-relief.png
 mesh-image prism-monitor.gltf prism-metal.png
+
+mesh meridian-heliograph.gltf a305fe3d22774e8d8acfbdb41e6c8f7c

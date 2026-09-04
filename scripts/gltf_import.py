@@ -1,4 +1,4 @@
-"""Bake a bounded glTF 2.0 static scene into the Emberfall mesh format."""
+"""Bake bounded glTF 2.0 meshes and animation into the Emberfall mesh format."""
 
 import base64
 import binascii
@@ -17,7 +17,7 @@ MAX_PRIMITIVES = 32
 MAX_NODES = 256
 FILE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}\.bin")
 COMPONENTS = {5121: ("B", 1), 5123: ("H", 2), 5125: ("I", 4), 5126: ("f", 4)}
-WIDTHS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+WIDTHS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
 IDENTITY = (1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.)
 
 
@@ -143,14 +143,15 @@ class Accessors:
             self.views.append((data[offset:offset+size], offset, stride))
         self.specs = items(root.get("accessors"), "accessors", 512)
 
-    def read(self, index, shape, allowed, vertex=False):
+    def read(self, index, shape, allowed, vertex=False, weights=False):
         spec = obj(indexed(self.specs, index, "accessor index"), "accessor")
         kind = spec.get("componentType")
         require(type(kind) is int and kind in allowed and spec.get("type") == shape, "Accessor type mismatch")
-        require("sparse" not in spec and spec.get("normalized", False) is False,
-                "Sparse and normalized accessors are outside the static subset")
+        normalized = weights and kind != 5126
+        require("sparse" not in spec and spec.get("normalized", False) is normalized,
+                "Sparse or invalid normalized accessor")
         data, view_offset, stride = indexed(self.views, spec.get("bufferView"), "accessor.bufferView")
-        require(vertex or stride == 0, "Index accessor cannot use a strided bufferView")
+        require(vertex or stride == 0, "Non-vertex accessor cannot use a strided bufferView")
         count = integer(spec.get("count"), "accessor.count", MAX_VERTICES)
         require(count > 0, "Empty accessor")
         offset = integer(spec.get("byteOffset", 0), "accessor.byteOffset", len(data))
@@ -163,7 +164,11 @@ class Accessors:
                 "Accessor alignment or stride invalid")
         require(element + stride*(count-1) <= len(data)-offset, "Accessor exceeds its bufferView")
         unpack = struct.Struct("<" + scalar*width)
-        return [unpack.unpack_from(data, offset + i*stride) for i in range(count)]
+        records = [unpack.unpack_from(data, offset + i*stride) for i in range(count)]
+        if normalized:
+            maximum = (1 << (8*size))-1
+            return [tuple(value/maximum for value in record) for record in records]
+        return records
 
 
 def normalize(v, label):
@@ -278,16 +283,104 @@ def material(raw, textures):
     return (*color[:3], metal, roughness, *emissive), (base, metal_rough, normal, scale)
 
 
-def bake_primitive(raw, matrix, access, materials, fallback, budget, textured):
+def bake_rig(root, access, nodes, parents):
+    skins = items(root.get("skins", []), "skins", 1)
+    skin = obj(indexed(skins, 0, "skin"), "skin")
+    joints = [integer(node, "joint index", len(nodes)-1) for node in items(skin.get("joints"), "joints", 128)]
+    require(joints and len(joints) == len(set(joints)) and all(node in parents for node in joints),
+            "Skin joints must be unique nodes in the selected scene")
+    inverse = access.read(skin["inverseBindMatrices"], "MAT4", (5126,)) if "inverseBindMatrices" in skin else [IDENTITY]*len(joints)
+    require(len(inverse) == len(joints), "Inverse bind count mismatch")
+    binds = dict(zip(joints, inverse))
+    # Scene traversal is parent-first. glTF vertex indices still refer to the original skin.joints order.
+    ordered = [node for node in parents if node in binds]
+    indices = {node: i for i, node in enumerate(ordered)}
+    depths = {}
+    clips = items(root.get("animations", []), "animations", 8)
+    data = bytearray(struct.pack("<II", len(joints), len(clips)))
+    for index in ordered:
+        parent = parents[index]
+        require(parent is None or parent in indices, "Joint parent must also belong to the skin")
+        depths[index] = 1 + depths.get(parent, 0)
+        require(depths[index] <= 16, "Joint hierarchy too deep")
+        node = nodes[index]
+        require("matrix" not in node and "mesh" not in node, "Joints must use TRS and carry no mesh")
+        translation = vector(node.get("translation", [0, 0, 0]), 3, "joint translation")
+        rotation = vector(node.get("rotation", [0, 0, 0, 1]), 4, "joint rotation", -1.001, 1.001)
+        scale = vector(node.get("scale", [1, 1, 1]), 3, "joint scale", 0.75, 1.25)
+        matrix = binds[index]
+        axes = matrix[0:3], matrix[4:7], matrix[8:11]
+        require(all(abs(v) <= 4096 for v in matrix) and
+                (matrix[3], matrix[7], matrix[11], matrix[15]) == (0, 0, 0, 1) and
+                all(abs(sum(a*b for a, b in zip(axes[i], axes[j])) - (i == j)) < 0.0019
+                    for i in range(3) for j in range(i, 3)), "Inverse bind must be a rigid affine matrix")
+        data.extend(struct.pack("<I26f", indices[parent]+1 if parent is not None else 0,
+                                *translation, *normalize(rotation, "joint rotation"), *scale, *matrix))
+    remaining = 16_384
+    paths = {"translation": ("VEC3", -4096, 4096), "rotation": ("VEC4", -1.001, 1.001),
+             "scale": ("VEC3", 0.75, 1.25)}
+    for raw in clips:
+        clip = obj(raw, "animation")
+        samplers = items(clip.get("samplers"), "animation samplers", 384)
+        channels = {}
+        duration = 0
+        for raw_channel in items(clip.get("channels"), "animation channels", 384):
+            channel = obj(raw_channel, "channel")
+            target = obj(channel.get("target"), "channel target")
+            node = integer(target.get("node"), "animation target", len(nodes)-1)
+            path = target.get("path")
+            require(node in indices and type(path) is str and path in paths and (node, path) not in channels,
+                    "Invalid or duplicate animation target")
+            sampler = obj(indexed(samplers, channel.get("sampler"), "animation sampler"), "sampler")
+            mode = sampler.get("interpolation", "LINEAR")
+            require(mode in ("LINEAR", "STEP"), "Unsupported animation interpolation")
+            times = [t for (t,) in access.read(sampler.get("input"), "SCALAR", (5126,))]
+            require(len(times) <= min(4096, remaining) and 0 <= times[0] <= times[-1] <= 3600
+                    and all(a < b for a, b in zip(times, times[1:])), "Animation key order or budget")
+            shape, low, high = paths[path]
+            values = access.read(sampler.get("output"), shape, (5126,))
+            require(len(values) == len(times) and all(low <= v <= high for value in values for v in value),
+                    "Animation key value count or range")
+            if path == "rotation":
+                require(all(abs(math.hypot(*q)-1) <= 0.0009 for q in values), "Invalid animation quaternion")
+                values = [normalize(q, "animation quaternion") for q in values]
+            remaining -= len(times)
+            duration = max(duration, times[-1])
+            record = struct.Struct("<" + "f"*(1+WIDTHS[shape]))
+            channels[node, path] = (struct.pack("<II", len(times), mode == "STEP") +
+                                    b"".join(record.pack(t, *value) for t, value in zip(times, values)))
+        require(duration > 0, "Animation duration must be positive")
+        data.extend(struct.pack("<f", duration))
+        for node in ordered:
+            for path in paths:
+                data.extend(channels.get((node, path), b"\0"*4))
+    return bytes(data), [indices[joint] for joint in joints]
+
+
+def bake_primitive(raw, matrix, access, materials, fallback, budget, textured, joint_remap):
     primitive = obj(raw, "primitive")
     require(type(primitive.get("mode", 4)) is int and primitive.get("mode", 4) == 4
-            and "targets" not in primitive, "Only static triangle lists are supported")
+            and "targets" not in primitive, "Only triangle lists without morphs are supported")
     attributes = obj(primitive.get("attributes"), "primitive.attributes")
-    require(set(attributes) <= {"POSITION", "NORMAL", "TANGENT", "TEXCOORD_0"},
-            "Unsupported primitive vertex attribute")
+    skin_attributes = {"JOINTS_0", "WEIGHTS_0"}
+    supported = {"POSITION", "NORMAL", "TANGENT", "TEXCOORD_0"}
+    if joint_remap is not None:
+        require(skin_attributes | {"NORMAL"} <= attributes.keys(), "Skin requires joint, weight and normal data")
+        supported |= skin_attributes
+    require(set(attributes) <= supported, "Unsupported primitive vertex attribute")
     positions = access.read(attributes.get("POSITION"), "VEC3", (5126,), vertex=True)
     normals = access.read(attributes["NORMAL"], "VEC3", (5126,), vertex=True) if "NORMAL" in attributes else None
     require(normals is None or len(normals) == len(positions), "Vertex normal count mismatch")
+    influences = None
+    if joint_remap is not None:
+        joints = access.read(attributes["JOINTS_0"], "VEC4", (5121, 5123), vertex=True)
+        weights = access.read(attributes["WEIGHTS_0"], "VEC4", (5121, 5123, 5126), vertex=True, weights=True)
+        require(len(joints) == len(weights) == len(positions) and
+                all(j < len(joint_remap) for vertex in joints for j in vertex), "Skin joint index or count")
+        require(all(all(0 <= w <= 1 for w in row) and abs(sum(row)-1) <= 0.0019 for row in weights),
+                "Skin weights must sum to one")
+        influences = [struct.pack("<4B4f", *(joint_remap[j] for j in vertex), *(w/sum(row) for w in row))
+                      for vertex, row in zip(joints, weights)]
     if "indices" in primitive:
         indices = [value for (value,) in access.read(primitive["indices"], "SCALAR", (5121, 5123, 5125))]
     else:
@@ -334,6 +427,8 @@ def bake_primitive(raw, matrix, access, materials, fallback, budget, textured):
             if textured:
                 data.extend(struct.pack("<6f", *(uv[i] if uv is not None else (0, 0)),
                                         *(tangent[i] if tangent is not None else (0, 0, 0, 1))))
+            if influences is not None:
+                data.extend(influences[i])
     return bytes(data), len(indices)
 
 
@@ -347,8 +442,7 @@ def bake(source, external):
     asset = obj(root.get("asset"), "asset")
     require(asset.get("version") == "2.0" and asset.get("minVersion", "2.0") == "2.0",
             "Only glTF 2.0 is supported")
-    require(not any(root.get(name) for name in ("extensionsRequired", "animations", "skins")),
-            "Required extensions, animations and skins are outside the static subset")
+    require(not root.get("extensionsRequired"), "Required glTF extensions are unsupported")
     access = Accessors(root, load_buffers(root, binary, external))
     meshes = items(root.get("meshes"), "meshes", MAX_NODES)
     nodes = items(root.get("nodes"), "nodes", MAX_NODES)
@@ -357,34 +451,47 @@ def bake(source, external):
     textures = Textures(root, access, external)
     materials = [material(raw, textures) for raw in items(root.get("materials", []), "materials", 64)]
     fallback = material({}, textures)
-    textured = bool(textures.layers)
-    budget = MAX_VERTICES
-    visited = set()
-    baked = []
+    parents = {}
+    models = []
 
-    def visit(index, parent, depth):
-        nonlocal budget
+    def visit(index, parent, parent_matrix, depth):
         node = obj(indexed(nodes, index, "node index"), "node")
-        require(depth <= 32 and index not in visited, "Scene contains a cycle, repeated node or deep hierarchy")
-        visited.add(index)
-        require("skin" not in node and "weights" not in node, "Skinned and morphed nodes are unsupported")
-        matrix = multiply(parent, local_matrix(node))
+        require(depth <= 32 and index not in parents, "Scene contains a cycle, repeated node or deep hierarchy")
+        parents[index] = parent
+        require("weights" not in node and ("skin" not in node or "mesh" in node), "Invalid mesh or morph node")
+        matrix = multiply(parent_matrix, local_matrix(node))
         require(all(math.isfinite(value) and abs(value) < 100_000 for value in matrix),
                 "Composed node transform exceeds bounds")
         if "mesh" in node:
-            mesh = obj(indexed(meshes, node["mesh"], "node.mesh"), "mesh")
-            for raw in items(mesh.get("primitives"), "mesh.primitives", MAX_PRIMITIVES):
-                require(len(baked) < MAX_PRIMITIVES, "Baked primitive budget exceeded")
-                data, count = bake_primitive(raw, matrix, access, materials, fallback, budget, textured)
-                baked.append(data)
-                budget -= count
+            models.append((node, parent, matrix))
         for child in items(node.get("children", []), "node.children", MAX_NODES):
-            visit(child, matrix, depth+1)
+            visit(child, index, matrix, depth+1)
 
     for index in items(scene.get("nodes"), "scene.nodes", MAX_NODES):
-        visit(index, IDENTITY, 1)
+        visit(index, None, IDENTITY, 1)
+    skinned = any("skin" in node for node, _, _ in models)
+    rig, joint_remap = b"", None
+    if skinned:
+        require(len(models) == 1, "Skin subset supports one mesh node")
+        node, parent, matrix = models[0]
+        require(type(node["skin"]) is int and node["skin"] == 0 and parent is None and matrix == IDENTITY,
+                "Skinned mesh must be an untransformed scene root using skin 0")
+        rig, joint_remap = bake_rig(root, access, nodes, parents)
+    else:
+        require(not root.get("animations") and not root.get("skins"), "Animation requires a selected skin")
+    textured = bool(textures.layers) or skinned
+    budget = MAX_VERTICES
+    baked = []
+    for node, _, matrix in models:
+        mesh = obj(indexed(meshes, node["mesh"], "node.mesh"), "mesh")
+        for raw in items(mesh.get("primitives"), "mesh.primitives", MAX_PRIMITIVES):
+            require(len(baked) < MAX_PRIMITIVES, "Baked primitive budget exceeded")
+            data, count = bake_primitive(raw, matrix, access, materials, fallback, budget, textured, joint_remap)
+            baked.append(data)
+            budget -= count
     require(baked, "Selected scene contains no triangles")
     if textured:
-        return (struct.pack("<8sII", b"EMBMSH02", len(baked), len(textures.layers)) +
-                b"".join(textures.layers) + b"".join(baked))
+        magic = b"EMBMSH03" if skinned else b"EMBMSH02"
+        return (struct.pack("<8sII", magic, len(baked), len(textures.layers)) +
+                b"".join(textures.layers) + rig + b"".join(baked))
     return struct.pack("<8sI", b"EMBMSH01", len(baked)) + b"".join(baked)

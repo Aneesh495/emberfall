@@ -26,10 +26,15 @@ def cook(source, target, succeeds=True):
 with tempfile.TemporaryDirectory(prefix="ember-cook-test-") as root:
     source, first, second = (Path(root) / item for item in ("source", "first", "second"))
     shutil.copytree(original, source)
-    assert len(cook(source, first)) == 4
+    expected = ["01-aperture.scene", "02-prism.scene", "03-meridian.scene",
+                "meridian-heliograph.mesh", "prism-monitor.mesh"]
+    assert cook(source, first) == expected
     assert cook(source, first) == []
-    assert len(cook(source, second)) == 4
+    assert cook(source, second) == expected
     assert (first / "manifest.json").read_bytes() == (second / "manifest.json").read_bytes()
+    manifest = json.loads((first / "manifest.json").read_bytes())
+    assert manifest["outputs"]["03-meridian.scene"]["mesh_dependencies"] == ["meridian-heliograph.mesh"]
+    assert (first / "meridian-heliograph.mesh").read_bytes().startswith(b"EMBMSH03")
 
     scene = source / "01-aperture.scene"
     initial = scene.read_text()

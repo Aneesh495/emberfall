@@ -143,3 +143,54 @@ for bad, message in ((png[:-1], "Truncated PNG"), (png[:-5]+b"E"+png[-4:], "chec
     else:
         raise AssertionError("Malformed PNG accepted")
 print("glTF textures: PNG filters, sRGB mips, reflected tangents, external lineage and bounded decoding")
+
+skinned = copy.deepcopy(document)
+skinned["nodes"] = [{"mesh": 0, "skin": 0}, {"children": [2]}, {"translation": [0, 1, 0]}]
+skinned["scenes"] = [{"nodes": [0, 1]}]
+geometry = bytearray(binary)
+
+
+def skin_accessor(fmt, records, kind, shape, **extra):
+    geometry.extend(b"\0"*(-len(geometry) % 4))
+    start = len(geometry)
+    geometry.extend(b"".join(struct.pack("<"+fmt,*row) for row in records))
+    views, accessors = skinned["bufferViews"], skinned["accessors"]
+    accessors.append({"bufferView": len(views), "componentType": kind, "count": len(records),
+                      "type": shape, **extra})
+    views.append({"buffer": 0, "byteOffset": start, "byteLength": len(geometry)-start})
+    skinned["buffers"][0]["byteLength"] = len(geometry)
+    return len(accessors)-1
+
+
+attrs = skinned["meshes"][0]["primitives"][0]["attributes"]
+attrs["JOINTS_0"] = skin_accessor("4B", [(0,1,0,0)]*3, 5121, "VEC4")
+attrs["WEIGHTS_0"] = skin_accessor("4B", [(192,63,0,0)]*3, 5121, "VEC4", normalized=True)
+identity = (1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1)
+bind = (*identity[:12], 0,-1,0,1)
+skinned["skins"] = [{"joints": [2,1], "inverseBindMatrices": skin_accessor("16f",[bind,identity],5126,"MAT4")}]
+time = skin_accessor("f", [(0,), (2,)], 5126, "SCALAR")
+rotation = skin_accessor("4f", [(0,0,0,1), (0,0,1,0)], 5126, "VEC4")
+skinned["animations"] = [{"samplers": [{"input": time, "output": rotation, "interpolation": "STEP"}],
+                          "channels": [{"sampler": 0, "target": {"node": 2, "path": "rotation"}}]}]
+packed = mod.bake(encode(skinned), {"geometry.bin": geometry})
+assert struct.unpack_from("<8s4I",packed) == (b"EMBMSH03",1,0,2,1)
+assert struct.unpack_from("<I3f",packed,24+108) == (1,0,1,0)
+assert struct.unpack_from("<16f",packed,24+108+44) == bind
+channel = 24 + 216 + 4 + 12 + 4
+assert struct.unpack_from("<II5f5f",packed,channel) == (2,1,0,0,0,0,1,2,0,0,1,0)
+influence = len(packed)-68*3+48
+assert struct.unpack_from("<4B",packed,influence) == (1,0,1,1)
+assert abs(struct.unpack_from("<f",packed,influence+4)[0]-192/255) < 1e-6
+bad = copy.deepcopy(skinned)
+bad["animations"][0]["channels"] *= 2
+check_rejection(bad, "duplicate animation target", geometry)
+bad = copy.deepcopy(skinned)
+bad["skins"][0]["joints"] = [2,2]
+check_rejection(bad, "unique nodes", geometry)
+bad = copy.deepcopy(skinned)
+bad["accessors"][attrs["WEIGHTS_0"]]["normalized"] = False
+check_rejection(bad, "invalid normalized", geometry)
+bad_bytes = bytearray(geometry)
+bad_bytes[skinned["bufferViews"][skinned["accessors"][attrs["JOINTS_0"]]["bufferView"]]["byteOffset"]] = 2
+check_rejection(skinned, "Skin joint index", bad_bytes)
+print("glTF skin import: joint remapping, authored inverse bind, normalized weights and stepped tracks")

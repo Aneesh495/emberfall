@@ -17,6 +17,7 @@ struct View {
     float far_plane{160};
     bool local_shadows{true};
     bool temporal{};
+    float animation_second{};
 };
 
 struct OverlayVertex {

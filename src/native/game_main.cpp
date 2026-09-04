@@ -719,6 +719,7 @@ int Application::run() {
         const auto animation = world_->skin(alpha,remote);
         View view{eye_,focus_,0.88f,settings_.exposure,settings_.antialias};
         view.temporal = true;
+        view.animation_second = (static_cast<float>(world_->ticks())+alpha)*Game::timestep;
         if (renderer_.draw(items,view,canvas.vertices(),animation,world_->imported_meshes(),effects_.active())) {
             peak_particles = std::max(peak_particles,renderer_.report().particles);
             peak_decals = std::max(peak_decals,renderer_.report().decals);
@@ -736,7 +737,8 @@ int Application::run() {
     std::cout << "frames=" << drawn << " surface=" << report.width << 'x' << report.height
               << " submitted=" << report.submitted << " culled=" << report.culled
               << " mesh_triangles=" << report.imported_triangles << " texture_layers=" << report.texture_layers << " gpu_ms=" << report.gpu_ms << " validation_errors=" << renderer_.validation_errors()
-              << " peak_particles=" << peak_particles << " peak_decals=" << peak_decals << '\n';
+              << " peak_particles=" << peak_particles << " peak_decals=" << peak_decals
+              << " animated_triangles=" << report.animated_triangles << '\n';
     if (network_) {
         const auto& net = network_->stats();
         std::cout << "packets_sent=" << net.sent << " packets_received=" << net.received

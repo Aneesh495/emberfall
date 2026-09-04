@@ -24,12 +24,14 @@ struct SurfaceMaterial {
 struct MeshPrimitive {
     SurfaceMaterial material;
     std::vector<MeshVertex> vertices;
+    std::vector<WeightedVertex> weighted{};
 };
 
 struct MeshAsset {
     std::vector<MeshPrimitive> primitives;
     std::size_t vertices{};
     std::vector<MeshTexture> textures;
+    std::optional<MeshRig> rig;
 };
 
 MeshAsset read_mesh(std::string_view bytes);
@@ -46,7 +48,7 @@ public:
 private:
     std::filesystem::path directory_;
     std::map<std::string, MeshAsset, std::less<>> assets_;
-    std::size_t resident_vertices_{}, resident_textures_{};
+    std::size_t resident_vertices_{}, resident_textures_{}, resident_bytes_{};
 };
 
 struct MeshInstance {

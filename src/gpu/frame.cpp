@@ -524,11 +524,13 @@ bool Renderer::State::draw(std::span<const RenderItem> items,const View& view,st
         if (mesh.vertices.size()>skin_vertex_limit-uploaded_vertices) throw std::runtime_error("Frame skin vertex budget");
         upload_mesh(mesh.vertices,{mesh.model,mesh.color,0});
     }
-    const auto animated_vertices = uploaded_vertices;
+    const auto actor_vertices = uploaded_vertices;
+    std::uint32_t animated_vertices = actor_vertices;
     std::map<const MeshAsset*,std::uint32_t> atlas_bases;
     std::uint32_t texture_layers = 0, dirty_layers = 0;
     for (const auto& mesh : imported) {
         if (!mesh.asset) throw std::runtime_error("Missing draw mesh");
+        const auto palette = mesh.asset->rig ? mesh.asset->rig->palette(view.animation_second) : std::vector<Mat4>{};
         const auto [base,added_asset] = atlas_bases.emplace(mesh.asset,texture_layers);
         if (added_asset) {
             if (mesh.asset->textures.size()>MeshTexture::limit-texture_layers) {
@@ -556,7 +558,15 @@ bool Renderer::State::draw(std::span<const RenderItem> items,const View& view,st
                 if (material.textures[i]) draw_item.texture_layers[i] = base->second+material.textures[i];
             }
             draw_item.normal_scale = material.normal_scale;
-            upload_mesh(primitive.vertices,draw_item);
+            if (mesh.asset->rig) {
+                // A rigid previous transform cannot reproject a deforming vertex.
+                draw_item.history_id = 0;
+                const auto deformed = deform(primitive.weighted,palette);
+                upload_mesh(deformed,draw_item);
+                animated_vertices += static_cast<std::uint32_t>(deformed.size());
+            } else {
+                upload_mesh(primitive.vertices,draw_item);
+            }
         }
     }
     record(frame,previous,screen,view,camera,temporal,history,count,dirty_layers,std::span(shadow_draws).first(shadow.count),static_cast<std::uint32_t>(overlay.size()),
@@ -620,7 +630,7 @@ bool Renderer::State::draw(std::span<const RenderItem> items,const View& view,st
     }
     report = {extent.width,extent.height,count,static_cast<std::uint32_t>(items.size())-count,elapsed,serial,
               shadow_count,static_cast<std::uint32_t>(lamps),triangles,draws,timed_serial,stamps,
-              properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-animated_vertices)/3,
+              properties.limits.timestampPeriod,timestamp_bits,(uploaded_vertices-actor_vertices)/3,
               static_cast<std::uint32_t>(masks.size()),tile_lights.entries(),static_cast<std::uint32_t>(shadow.count),nonempty_shadows,motion_items,animated_vertices/3,history,texture_layers,static_cast<std::uint32_t>(std::popcount(dirty_layers)),pass_gpu_ms,owned,particles,decals};
     return true;
 }

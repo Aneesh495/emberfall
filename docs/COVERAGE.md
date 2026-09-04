@@ -11,7 +11,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E05 | Bounded workers, DAG ordering, read/write validation, exception propagation and cancellation. [Scheduler](../src/scheduler.cpp) |
 | E06 | Fixed-step accumulation and position interpolation, overload cap, native pause and editor single-step. Tick edges are captured. Per-command wall-clock timestamps remain. [Game loop](../src/native/game_main.cpp) |
 | E07 | Versioned catalog, stable GUIDs, SHA-256 lineage and dependency-aware incremental cooking. [Catalog cooker](../scripts/cook.py) |
-| E08 | glTF and GLB static geometry, node transforms and opaque textures reach the game and editor. Skin and clip imports remain. [Importer](GLTF.md) |
+| E08 | glTF and GLB static geometry, opaque textures and single-skin assets reach the game and editor. The documented skeletal subset supports LINEAR and STEP translation, rotation and scale channels. [Importer](GLTF.md) |
 | E09 | Bounded asynchronous scene loading, priority, cancellation and lease-safe reload. GPU residency and render-asset streaming remain. [Scene stream](../src/scene_stream.cpp) |
 | E10 | Canonical scenes, prefab ID rebinding, bounded nested inheritance and field overrides through cooking and editor placement. Live instance overrides and schema migrations remain. [Editor document](../src/editor.cpp) |
 | E11 | Explicit image access, layouts, timeline ownership, slot reuse and live graph inspection. Transient aliasing remains. [Render graph](../src/gpu/render_graph.hpp) |
@@ -24,7 +24,7 @@ The source paths below identify the current implementation or diagnostic for eac
 | E18 | Boxes, spheres, capsules and validated convex hulls with angular impulses. Single-witness contacts and bounded continuous sweeps. [Angular physics](ANGULAR_PHYSICS.md) |
 | E19 | Warm starts, friction, restitution, sleeping, layer masks, triggers and conservative CCD against static boxes. [Dynamics fixtures](../tests/dynamics.cpp) |
 | E20 | Swept character motion, small steps, grounded jumping, crouch and platform carry. General slopes remain. [Character controller](../src/collision.cpp) |
-| E21 | Ordered joint tracks, interpolation and blending with weighted cloth skinning in the visible and shadow passes. Imported character rigs and a general animation state machine remain. [Animation](../src/animation.cpp) |
+| E21 | Ordered joint tracks, interpolation and blending with weighted cloth and imported skeletal meshes in the visible and shadow passes. Imported player character rigs and a general animation state machine remain. [Animation](../src/animation.cpp) |
 | E22 | Bounded ground A* replans through current collision geometry. Follow and hold modes drive the companion. [Navigation](../src/navigation.cpp) |
 | E23 | Two ordered command slots and tick-scoped game events. A general extensible event subscription layer remains. [Game runtime](../src/game.cpp) |
 | E24 | Pressure relays, timed doors, light routing, crate pushes, ferry sequencing and checkpoint recovery. [Route tests](../tests/playthrough.cpp) |

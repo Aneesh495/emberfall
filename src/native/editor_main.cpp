@@ -563,6 +563,8 @@ int Editor::run() {
         const auto actors = play_ ? play_->skin(1) : std::vector<SkinBatch>{};
         const auto models = play_ ? play_->imported_meshes() : std::span<const MeshInstance>(imported);
         viewport.temporal = true;
+        viewport.animation_second = play_ ? static_cast<float>(play_->ticks())*Game::timestep :
+            static_cast<float>(now/1'000'000)*0.001f;
         if (renderer_.draw(blocks,viewport,canvas.vertices(),actors,models,effects_.active())) {
             if (++drawn == options_.frames) break;
         } else SDL_Delay(10);
@@ -571,7 +573,8 @@ int Editor::run() {
     std::cout << "editor_frames=" << drawn << " validation_errors=" << renderer_.validation_errors() << " mesh_triangles=" << renderer_.report().imported_triangles
               << " texture_layers=" << renderer_.report().texture_layers
               << " graph_passes=" << renderer_.graph_report().pass_count
-              << " owned_bytes=" << renderer_.report().owned_bytes << " debug_colliders=" << debug_colliders_ << '\n';
+              << " owned_bytes=" << renderer_.report().owned_bytes << " debug_colliders=" << debug_colliders_
+              << " animated_triangles=" << renderer_.report().animated_triangles << '\n';
     return renderer_.validation_errors() == 0 && (!options_.frames || drawn == options_.frames) ? 0 : 1;
 }
 
