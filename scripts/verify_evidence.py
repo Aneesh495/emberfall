@@ -223,6 +223,9 @@ def verify_package(bundle):
         for name, checksum in expected.items():
             item = package.extractfile(prefix + name)
             check(item is not None and hashlib.sha256(item.read()).hexdigest() == checksum, "Package checksum mismatch")
+        levels = {f"levels/{path.name}": digest(path) for path in (bundle / "levels").iterdir() if path.is_file()}
+        check({name: checksum for name, checksum in expected.items() if name.startswith("levels/")} == levels,
+              "Package cooked assets differ from replay inputs")
         check(not any("editor" in name or name.endswith((".h", ".a")) for name in expected), "Editor leaked into package")
     raw = bundle / "raw"
     check("ui_check=settings,save,keyboard,focus,pause,restart,resize" in (raw / "ui_check.out").read_text() and
@@ -237,11 +240,16 @@ def verify_package(bundle):
               int(witness[1]) >= 6 and int(witness[2]) > 0 and (int(witness[3]) > 0) == (page == "physics"),
               "Editor live diagnostics evidence incomplete")
     for filename in ("frame.ppm", "ui.ppm", "editor.ppm", "editor-frame.ppm", "editor-physics.ppm", "editor-assets.ppm",
-                     "network.ppm", "ending.ppm"):
+                     "editor-skin.ppm", "network.ppm", "ending.ppm"):
         read_ppm(raw / filename)
+    skin = (raw / "editor_skin.out").read_text()
+    check("editor_frames=40 validation_errors=0 mesh_triangles=198" in skin and
+          "animated_triangles=198" in skin, "Workshop skeletal asset missing")
     packaged = (raw / "package_smoke.out").read_text()
     states = re.findall(r"replay_ticks=(\d+) final_hash=(\d+) completed=1", packaged)
     check(len(states) == 3 and "mesh_triangles=64 texture_layers=3" in packaged, "Packaged route or imported asset missing")
+    check(re.search(r"mesh_triangles=198 texture_layers=0 .* animated_triangles=214", packaged),
+          "Packaged Meridian skeletal asset missing")
     effects = re.findall(r"peak_particles=(\d+) peak_decals=(\d+)", packaged)
     check(len(effects) == 3 and all(int(burst)>=24 and int(decal)>=1 for burst, decal in effects),
           "Gameplay effects missing from a packaged replay")
@@ -278,7 +286,7 @@ def verify(bundle, source, tool):
     names = ["doctor", "build", "cook", "ctest", "world", "scheduler", "solo", "network", "ecs", "physics"]
     if profile == "portability-diagnostic":
         names += ["gpu_smoke", "shadow_fixture", "temporal_fixture", "material_fixture", "effects_fixture", "render", "ui_check", "editor",
-                  "editor_frame", "editor_physics", "editor_assets", "package", "package_smoke"]
+                  "editor_frame", "editor_physics", "editor_assets", "editor_skin", "package", "package_smoke"]
     check([row["name"] for row in commands] == names and all(
         row["exit"] == 0 and 0 <= row["wall_seconds"] < row["timeout_seconds"] for row in commands
     ), "Required command failed or missing")

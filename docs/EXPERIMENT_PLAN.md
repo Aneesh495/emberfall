@@ -4,6 +4,8 @@
 
 The render workload extends the shadow-atlas baseline from `m2-atlas-v1`. The new run includes a temporal resolve, a second opaque color output for motion and depth, and two animated eight-triangle cloth batches driven by the game animation path. The v3 profile adds a separately timed HDR effects layer with one seeded 24-particle burst and one ground decal per frame. Preserve the earlier campaigns because the GPU pass set changed.
 
+The preview wrap-up repeats the v3 stress workload and adds a separate imported skin check. The workshop must present 40 frames of Meridian with zero validation errors and 198 imported skinned triangles. The third standalone replay must report the same imported geometry plus the two eight-triangle player scarves. The format fixtures independently check joint remapping, bind data, normalized weights and the channel time contract.
+
 The local candidate is an Apple M2 with 16 GiB RAM and 10 GPU cores on macOS 26.7.2 (25G320). Vulkan observations use MoltenVK 1.4.2, Vulkan loader and validation layers 1.4.363, and glslang 16.6.0. Use a Release build with Apple Clang 21.0.0. Run timing workloads separately on an otherwise idle system. Retain failed runs and mark the profile as a portability diagnostic.
 
 | Question | Unit and procedure | Decision rule |

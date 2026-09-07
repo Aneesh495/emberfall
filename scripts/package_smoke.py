@@ -76,12 +76,24 @@ def main():
         if platform.system() == "Darwin" and not {"lib/libvulkan.1.dylib", "lib/libMoltenVK.dylib"} <= inventory.keys():
             raise ValueError("Missing bundled Vulkan runtime")
         print(f"package_files={len(inventory)}", flush=True)
-        for i, tape in enumerate(sorted(replays.glob("*.replay"))):
+        tapes = sorted(replays.glob("*.replay"))
+        if [tape.name for tape in tapes] != ["01-aperture.scene.replay", "02-prism.scene.replay",
+                                             "03-meridian.scene.replay"]:
+            raise RuntimeError("Expected one replay per level")
+        for i, tape in enumerate(tapes):
             argv = [installed / "play", "--no-audio", "--size", "680x420", "--profile", Path(folder) / "profile",
                     "--replay", tape, "--replay-fast"]
             if i == 2:
                 argv.extend(["--capture", capture])
-            subprocess.run(argv, check=True, env=env, timeout=35, cwd=installed)
+            run = subprocess.run(argv, env=env, timeout=35, cwd=installed, text=True, capture_output=True)
+            print(run.stdout, end="", flush=True)
+            print(run.stderr, end="", file=sys.stderr, flush=True)
+            if run.returncode or not re.search(r"replay_ticks=\d+ final_hash=\d+ completed=1", run.stdout):
+                raise RuntimeError(f"Packaged replay did not complete: {tape.name}")
+            if tape.name == "03-meridian.scene.replay" and not re.search(
+                r"mesh_triangles=198 texture_layers=0 .* animated_triangles=214", run.stdout
+            ):
+                raise RuntimeError("Packaged Meridian skeletal asset missing")
         coop(installed, Path(folder) / "coop", capture.with_name("network.ppm"), env)
 
 
