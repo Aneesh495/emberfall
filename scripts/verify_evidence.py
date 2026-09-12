@@ -307,7 +307,10 @@ def verify(bundle, source, tool):
         check(name == Path(name).name and name.endswith((".scene", ".mesh")), "Invalid cooked asset name")
         check(digest(levels / name) == record["sha256"], "Cooked asset mismatch")
         if name.endswith(".mesh"):
-            check((levels / name).read_bytes().startswith((b"EMBMSH01", b"EMBMSH02")), "Invalid baked mesh header")
+            with (levels / name).open("rb") as mesh:
+                magic = mesh.read(8)
+            allowed = (b"EMBMSH03",) if name == "meridian-heliograph.mesh" else (b"EMBMSH01", b"EMBMSH02", b"EMBMSH03")
+            check(magic in allowed, "Invalid baked mesh header")
         for dependency in record.get("mesh_dependencies", []):
             check(dependency in catalog and dependency.endswith(".mesh"), "Unknown cooked mesh dependency")
     replays = {}
