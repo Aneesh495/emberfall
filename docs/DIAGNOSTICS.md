@@ -1,5 +1,19 @@
 # Verified portability diagnostic
 
+## November 7 preview
+
+Run `m2-preview-wrap-v2` used clean checkout `bd461d7bb2af9d7b402f70be7058990589004942` on Apple M2 with MoltenVK. Its evidence manifest SHA-256 is `47fd1816d2cec6ac4dc40b99addf051e8c5ffb7584b6a1a18588e5b7699d89e4`.
+
+All 24 diagnostic commands and 18 tests passed. The standalone game replayed all three levels at 357, 372 and 453 ticks. The verifier reproduced their exact state hashes against matching cooked assets and recomputed the timing results. It rejected all 11 tamper controls for the expected reasons. The standalone client applied 49 authoritative snapshots on loopback. The separate fault-injected UDP fixture completed all three levels with three exit events and one mirror event.
+
+The Vulkan workshop presented 40 frames with zero validation errors and 198 animated triangles from the imported Meridian heliograph. The packaged Meridian replay submitted the same asset plus the two eight-triangle player scarves. The synthetic 1080p stress workload measured 16.500 ms GPU median and 21.513 ms p99. The one-worker and four-worker ECS workloads measured 0.312 ms and 0.236 ms p95. The translating-body workload measured 3.730 ms p95.
+
+All 18 core tests also passed under ASan and UBSan on the M2. Hosted Linux x86-64 passed the CPU evidence checks, software Vulkan fixtures, standalone replays and packaged loopback co-op on the executable commit. [Hosted diagnostic](https://github.com/Aneesh495/emberfall/actions/runs/42387772819)
+
+`full-preview-wrap-v2` returned blocked. The release command rejected the verified preview bundle because it requires a full campaign. The [gate matrix](BUILD_STATUS.md) tracks the remaining requirements.
+
+## November 4 continuation
+
 Run `m2-continuation-v1` executed source commit `4d1550212d50d3687bf00fcd95ff86d9a37b8b2d` from a clean isolated checkout. The native renderer used an Apple M2 and MoltenVK 1.4.2. The evidence manifest SHA-256 is `f326b9f4b25b281fceb0b59ca9d015d30d3539f2f47e9d02e76a882b05b9dc00`.
 
 | Workload | Observed result |
